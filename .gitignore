@@ -1,0 +1,14 @@
+node_modules/
+.pnpm-store/
+dist/
+.reference/
+.permission-recovery/
+.artifacts/
+.test-tmp/
+playwright-report/
+test-results/
+*.tgz
+*.log
+.env
+.env.*
+!.env.example

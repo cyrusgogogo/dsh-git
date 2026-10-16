@@ -1,0 +1,51 @@
+{
+  "name": "dsh-git",
+  "version": "0.1.1",
+  "description": "A native DSH Git toolbar with repository history, branches and worktrees.",
+  "type": "module",
+  "license": "MIT",
+  "engines": { "node": ">=22" },
+  "main": "./dist/index.mjs",
+  "exports": {
+    ".": "./dist/index.mjs",
+    "./client": "./dist/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "cordis.patch.yml", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "docs/verification.md"],
+  "dsh": {
+    "bundle": { "patch": "cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-session",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs --watch",
+    "test": "node --test --test-isolation=none --test-concurrency=1 tests/*.test.mjs",
+    "test:ui": "node scripts/build-ui-test.mjs && node --test --test-isolation=none --test-concurrency=1 tests/ui/*.test.mjs",
+    "check": "pnpm run build && pnpm run test && pnpm run test:ui",
+    "prepare": "node scripts/build.mjs",
+    "prepack": "node scripts/build.mjs && node scripts/generate-notices.mjs"
+  },
+  "dependencies": { "zod": "^4.4.3" },
+  "peerDependencies": { "@deepseek-ai/cordis": "~4.0.4" },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "~4.0.4",
+    "@playwright/test": "^1.58.2",
+    "@radix-ui/react-context-menu": "^2.2.16",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-dropdown-menu": "^2.1.16",
+    "@radix-ui/react-popover": "^1.1.15",
+    "esbuild": "^0.25.12",
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  }
+}

@@ -1,0 +1,7 @@
+- insert:
+    - id: dsh-git
+      name: dsh-git
+      config:
+        maxCommits: 300
+        commandTimeoutMs: 30000
+        networkTimeoutMs: 120000

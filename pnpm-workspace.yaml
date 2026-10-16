@@ -1,0 +1,4 @@
+# Ordinary package directories avoid Windows sandbox junction resolution issues.
+nodeLinker: hoisted
+allowBuilds:
+  esbuild: false
