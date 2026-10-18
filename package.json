@@ -1,6 +1,6 @@
 {
   "name": "dsh-git",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A native DSH Git toolbar with repository history, branches and worktrees.",
   "type": "module",
   "license": "MIT",

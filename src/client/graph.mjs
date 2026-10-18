@@ -1,4 +1,6 @@
-export const GRAPH_COLORS = ['#83ba5a', '#7ba9e0', '#b995df', '#e4b564', '#64bdb3', '#d98791'];
+/* Lane colours reference theme-adaptive CSS tokens (see styles.css) so the
+   graph keeps its contrast on both dark and light host surfaces. */
+export const GRAPH_COLORS = ['var(--git-graph-1)', 'var(--git-graph-2)', 'var(--git-graph-3)', 'var(--git-graph-4)', 'var(--git-graph-5)', 'var(--git-graph-6)'];
 
 /** Keep lanes stable across rows; every edge is derived from actual parent OIDs. */
 export function layoutGraph(commits) {

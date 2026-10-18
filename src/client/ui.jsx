@@ -6,11 +6,11 @@ export const IconButton = React.forwardRef(function IconButton({ icon: Icon, lab
   return <button ref={ref} type="button" className={`git-icon-button ${className}`} aria-label={label} title={label} {...props}><Icon size={15} strokeWidth={1.6} aria-hidden="true" /></button>;
 });
 export function RefIcon({ branch, current = false, size = 14 }) {
-  const Icon = current ? Tag : branch?.kind === 'remote' ? GitFork : GitBranch;
+  const Icon = branch?.kind === 'tag' ? Tag : branch?.kind === 'remote' ? GitFork : GitBranch;
   return <Icon size={size} strokeWidth={1.6} className={current ? 'git-current-icon' : ''} aria-hidden="true" />;
 }
 export function EmptyState({ title, description, icon: Icon = FolderGit2, children, compact = false }) {
-  return <div className={`git-empty ${compact ? 'git-empty-compact' : ''}`}><Icon size={compact ? 24 : 34} strokeWidth={1.25} aria-hidden="true" /><h3>{title}</h3>{description && <p>{description}</p>}{children}</div>;
+  return <div className={`git-empty ${compact ? 'git-empty-compact' : ''}`}><span className="git-empty-icon" aria-hidden="true"><Icon size={compact ? 17 : 22} strokeWidth={1.6} /></span><h3>{title}</h3>{description && <p>{description}</p>}{children}</div>;
 }
 export function SearchInput({ value, onChange, placeholder, label, ...props }) {
   return <div className="git-search"><Search size={14} strokeWidth={1.6} aria-hidden="true" /><input aria-label={label || placeholder} placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} {...props} />{value && <button type="button" aria-label={`清除${label || '搜索'}`} onClick={() => onChange('')}><X size={12} aria-hidden="true" /></button>}</div>;

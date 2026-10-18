@@ -33,7 +33,7 @@ function CommitGraph({ graph, width, current }) {
     {graph.through.filter((edge) => edge.to >= 0).map((edge) => <path key={`${edge.from}-${edge.to}`} d={`M${x(edge.from)} 0 C${x(edge.from)} 14,${x(edge.to)} 14,${x(edge.to)} 29`} fill="none" stroke={color(edge.from)} strokeWidth={1.5} />)}
     {graph.connectedFromAbove && <path d={`M${x(graph.lane)} 0 V14`} stroke={color(graph.lane)} strokeWidth={1.5} />}
     {graph.parents.map((parent) => <path key={parent.hash} d={`M${x(graph.lane)} 14 C${x(graph.lane)} 23,${x(parent.lane)} 18,${x(parent.lane)} 29`} fill="none" stroke={color(parent.lane)} strokeWidth={1.5} />)}
-    <circle cx={x(graph.lane)} cy={14} r={current ? 4.6 : 3.5} fill={current ? 'var(--git-bg)' : color(graph.lane)} stroke={color(graph.lane)} strokeWidth={current ? 2 : 0} />
+    <circle cx={x(graph.lane)} cy={14} r={current ? 4.8 : 3.6} fill={current ? 'var(--git-row-bg, var(--git-bg))' : color(graph.lane)} stroke={color(graph.lane)} strokeWidth={current ? 2 : 0} />
   </svg>;
 }
 function RefBadges({ refs }) {
@@ -57,7 +57,7 @@ export function History({ state, tab, actions }) {
     <button type="button" className="git-button git-cherry-pick" disabled={Boolean(pickBlocked)} title={pickBlocked || `优选 ${selected.hash.slice(0, 8)} 到 ${state.data.branch}（cherry-pick）`} onClick={() => selected && confirmAction(actions, '优选提交（cherry-pick）', `将 ${selected.hash.slice(0, 8)}「${selected.subject}」的更改应用到当前分支 ${state.data.branch}，并创建新提交。不切换分支，不自动暂存现有改动。发生冲突时会保留现场，可解决并暂存后继续，或中止优选。`, { action: 'cherryPick', hash: selected.hash })}><Cherry size={13} aria-hidden="true" />优选</button>
   </div>
     <div className="git-history-columns" aria-hidden="true"><span style={{ paddingLeft: graph.width }}>提交信息<span className="git-history-count">{tab.loading ? <Spinner /> : `${tab.commits.length}${tab.hasMore ? '+' : ''} 个提交`}</span></span><span>作者</span><span>日期</span></div>
-    {tab.loading && !tab.commits.length ? <div className="git-loading"><Spinner />正在读取提交历史…</div> : !tab.commits.length ? <EmptyState title={state.data.head ? '没有匹配的提交' : '还没有提交'} description={state.data.head ? '试试调整搜索词或清除筛选条件。' : '仓库已就绪。你可以在“更改”中暂存文件并创建首次提交。'} compact icon={GitCommitHorizontal} /> : <div className="git-commit-list" role="listbox" aria-label="提交列表" tabIndex={0} aria-activedescendant={tab.selected ? `commit-${tab.id}-${tab.selected}` : undefined} onKeyDown={(event) => {
+    {tab.loading && !tab.commits.length ? <div className="git-loading"><Spinner />正在读取提交历史…</div> : !tab.commits.length ? <EmptyState title={state.data.head ? '没有匹配的提交' : '还没有提交'} description={state.data.head ? '试试调整搜索词或清除筛选条件。' : '仓库已就绪。你可以在“更改”中暂存文件并创建首次提交。'} compact icon={GitCommitHorizontal} /> : <div className="git-commit-list" role="listbox" aria-label="提交列表" aria-busy={tab.loading} tabIndex={0} aria-activedescendant={tab.selected ? `commit-${tab.id}-${tab.selected}` : undefined} onKeyDown={(event) => {
       if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
       event.preventDefault();
       const selected = tab.commits.findIndex((commit) => commit.hash === tab.selected);
@@ -93,7 +93,7 @@ export function Inspector({ state, tab, actions }) {
   const detail = tab.detail;
   const nodes = useMemo(() => makeFileTree(detail?.files || []), [detail?.files]);
   return <aside className="git-inspector" aria-label="提交详情">
-    {!detail ? <div className="git-inspector-placeholder">{tab.selected ? <><Spinner />读取提交详情…</> : <><GitCommitHorizontal size={25} strokeWidth={1.2} aria-hidden="true" /><span>选择提交以查看详情</span></>}</div> : <>
+    {!detail ? <div className="git-inspector-placeholder">{tab.selected ? <><Spinner />读取提交详情…</> : <><span className="git-inspector-placeholder-icon" aria-hidden="true"><GitCommitHorizontal size={22} strokeWidth={1.5} /></span><span>选择提交以查看详情</span></>}</div> : <>
       <div className="git-inspector-heading"><span>变更文件</span><span className="git-count">{detail.files.length}</span><span className="git-spacer" /><IconButton icon={FileCode} label="查看此提交的完整差异" onClick={() => actions.showDiff({ kind: 'commit', hash: detail.hash }, detail.subject)} /></div>
       <div className="git-file-tree">{nodes.length ? <FileTree nodes={nodes} hash={detail.hash} actions={actions} /> : <p className="git-small-empty">此提交没有文件变更</p>}</div>
       <div className="git-commit-details"><p className="git-commit-message">{detail.message?.trim() || detail.subject}</p><div className="git-commit-facts"><button type="button" className="git-copy-hash" title="复制完整提交哈希" onClick={() => actions.copy(detail.hash)}><code>{detail.hash.slice(0, 8)}</code><Copy size={11} aria-hidden="true" /></button><span title={detail.email}>{detail.author}</span><span className="git-muted">·</span><time dateTime={detail.date}>{new Date(detail.date).toLocaleString('zh-CN', { hour12: false })}</time></div><div className="git-detail-refs"><RefBadges refs={detail.refs} /></div>{detail.parents.length > 1 && <p className="git-muted git-merge-note">合并提交 · 文件差异相对于第一个父提交</p>}</div>
