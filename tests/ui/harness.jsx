@@ -6,7 +6,11 @@ import { Request as Payload } from '../../src/shared/protocol.mjs';
 
 const definitions = new Map();
 window.__ModuleLoader__ = { load: (definition) => definitions.set(definition.id, definition) };
-const observable = (value) => ({ getSnapshot: () => value, subscribe: () => () => {} });
+const observable = (initial) => {
+  let value = initial;
+  const listeners = new Set();
+  return { getSnapshot: () => value, subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); }, set: (next) => { value = next; for (const listener of listeners) listener(); } };
+};
 const hash = (number) => Array.from({ length: 5 }, (_, index) => (Math.imul(number + index + 1, 0x9e3779b1) >>> 0).toString(16).padStart(8, '0')).join('');
 
 function makeData() {
@@ -22,7 +26,27 @@ function makeData() {
 }
 const changedFiles = [{ status: 'A', path: 'src/client/panel.jsx' }, { status: 'M', path: 'src/client/styles.css' }, { status: 'M', path: 'src/host/git-service.mjs' }, { status: 'A', path: 'docs/usage.md' }];
 
-window.testMount = () => {
+window.testMount = ({ windowsMenu = true } = {}) => {
+  const nativeMenuClicks = [];
+  let menuHost = null;
+  const mountWindowsMenu = () => {
+    menuHost?.remove();
+    document.documentElement.setAttribute('data-windows-titlebar', '');
+    menuHost = document.createElement('div');
+    menuHost.dataset.windowsMenu = '';
+    const shadow = menuHost.attachShadow({ mode: 'open' });
+    shadow.innerHTML = `<style>:host{position:fixed;top:0;left:48px;z-index:1100;height:40px;display:flex;align-items:center;font-family:Segoe UI,Microsoft YaHei,sans-serif;-webkit-app-region:no-drag}[role=menubar]{display:flex;gap:2px}button{height:28px;padding:0 10px;border:0;border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary,#aeb3bd);font:inherit;font-size:14px;cursor:default}button:hover,button[aria-expanded=true]{background:var(--dsw-alias-interactive-bg-hover,#ffffff0c);color:var(--dsw-alias-label-primary,#dce0e6)}button:focus-visible{outline:2px solid var(--dsw-alias-state-business-primary,#83afe9);outline-offset:-2px}</style><div role="menubar" aria-label="应用菜单"><button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" tabindex="0">应用</button><button type="button" role="menuitem" aria-haspopup="menu" aria-expanded="false" tabindex="-1">编辑</button></div>`;
+    const buttons = [...shadow.querySelectorAll('[role=menuitem]')];
+    buttons.forEach((button, index) => {
+      button.addEventListener('click', () => nativeMenuClicks.push(index));
+      button.addEventListener('keydown', (event) => {
+        if (['ArrowLeft', 'ArrowRight'].includes(event.key)) { event.preventDefault(); button.tabIndex = -1; const next = buttons[index === 0 ? 1 : 0]; next.tabIndex = 0; next.focus(); }
+      });
+    });
+    document.body.append(menuHost);
+  };
+  if (windowsMenu) mountWindowsMenu();
+  const panelInfo = observable({ activePanelId: null });
   const plugin = definitions.get('dsh-git').factory((name) => {
     if (name === 'react') return React;
     if (name === 'react/jsx-runtime') return runtime;
@@ -31,6 +55,7 @@ window.testMount = () => {
   });
   const effects = [], entries = new Map(), requests = [];
   const server = makeData();
+  const stagedTree = () => hash((server.indexVersion || 0) + server.files.filter((file) => file.staged).reduce((sum, file) => sum + [...file.path].reduce((n, char) => n + char.charCodeAt(0), 0), 0));
   const root = createRoot(document.getElementById('app'));
   const render = () => {
     const Header = entries.get('conversation.session.header.utilities');
@@ -45,13 +70,23 @@ window.testMount = () => {
     }
     const { commits, ...data } = server;
     const tree = payload.worktreePath && server.worktrees.find((item) => item.path === payload.worktreePath);
-    return { ...data, ...(tree ? { root: tree.path, branch: tree.branch, head: tree.head } : {}) };
+    return { ...data, stagedTree: stagedTree(), ...(tree ? { root: tree.path, branch: tree.branch, head: tree.head } : {}) };
   };
   const call = async (channel, endpoint, raw, signal) => {
     if (channel !== '/api' || endpoint !== 'dsh-git') throw new Error('Invalid transport target');
     const payload = Payload.parse(raw); requests.push(payload);
     await new Promise((resolve) => setTimeout(resolve, 8)); signal?.throwIfAborted();
     const current = snapshot(payload);
+    if (payload.op === 'aiModels' && server.legacyAiModels) return { ok: false, error: { code: 'INVALID_REQUEST', message: 'Git 请求参数不合法。', details: { issues: [{ path: ['payload', 'op'], message: 'Invalid input' }] } } };
+    if (payload.op === 'aiModels') return { ok: true, value: { available: true, models: [{ provider: 'test-provider', model: 'test-model', label: '测试模型' }, { provider: 'test-provider', model: 'review-model', label: 'Review model' }] } };
+    if (payload.op === 'aiCommit') {
+      const tree = stagedTree();
+      if (server.aiDelay) await new Promise((resolve) => setTimeout(resolve, server.aiDelay));
+      signal?.throwIfAborted();
+      if (server.aiError) return { ok: false, error: { code: 'AI_ERROR', message: server.aiError } };
+      if (!server.files.some((file) => file.staged)) return { ok: false, error: { code: 'NO_STAGED_CHANGES', message: '请先暂存文件。' } };
+      return { ok: true, value: { message: server.aiText || 'feat(git): 改进提交工作流\n\n- 支持批量暂存与 AI 提交预览', provider: payload.provider || 'test-provider', model: payload.model || 'test-model', truncated: Boolean(server.aiTruncated), stagedTree: tree } };
+    }
     if (payload.op === 'initialize') { server.emptyInitialized = true; return { ok: true, value: { message: '已初始化 Git 仓库（main）。' } }; }
     if (payload.op === 'snapshot') return { ok: true, value: structuredClone(current) };
     if (payload.op === 'history') {
@@ -82,6 +117,7 @@ window.testMount = () => {
     if (payload.op === 'mutate') {
       if (payload.expected.head !== current.head || payload.expected.branch !== current.branch) return { ok: false, error: { code: 'STALE_REPOSITORY', message: '仓库已经变化，请刷新。' } };
       const m = payload.mutation;
+      if (['commit', 'commitAndPush'].includes(m.action) && m.stagedTree && m.stagedTree !== stagedTree()) return { ok: false, error: { code: 'STALE_INDEX', message: '暂存内容已变化，请重新生成提交信息。' } };
       if (m.action === 'createBranch') {
         server.branches.push({ kind: 'local', name: m.name, ref: `refs/heads/${m.name}`, hash: server.head, subject: server.commits[0].subject, upstream: null, ahead: 0, behind: 0 });
         if (m.checkout) { server.branch = m.name; server.worktrees[0].branch = m.name; }
@@ -106,8 +142,15 @@ window.testMount = () => {
         server.branches.find((branch) => branch.kind === 'local' && branch.name === server.branch).hash = picked.hash;
         server.worktrees[0].head = picked.hash;
       }
-      if (m.action === 'stage' || m.action === 'unstage') for (const file of server.files.filter((file) => m.paths.includes(file.path))) { file.staged = m.action === 'stage'; file.unstaged = !file.staged; if (file.staged) file.conflict = false; }
-      if (m.action === 'commit') server.files = server.files.filter((file) => !file.staged);
+      if (m.action === 'stage' || m.action === 'unstage') {
+        server.indexVersion = (server.indexVersion || 0) + 1;
+        for (const file of server.files.filter((file) => m.paths.includes(file.path))) { file.staged = m.action === 'stage'; file.unstaged = !file.staged; if (file.staged) file.conflict = false; }
+      }
+      if (m.action === 'commit' || m.action === 'commitAndPush') {
+        server.files = server.files.filter((file) => !file.staged);
+        server.head = hash(200 + server.commits.length);
+        if (m.action === 'commitAndPush' && server.pushError) return { ok: false, error: { code: 'PUSH_FAILED_AFTER_COMMIT', message: `本地提交已成功，但推送失败：${server.pushError}。请仅重试推送，不要重复提交。`, details: { committed: true } } };
+      }
       if (m.action === 'abortOperation' || m.action === 'continueOperation') server.operation = null;
       return { ok: true, value: { message: '操作已完成。' } };
     }
@@ -121,14 +164,23 @@ window.testMount = () => {
       inject: (name, callback) => { const dispose = callback(); if (typeof dispose === 'function') effects.push(dispose); },
       register: (options, Component) => {
         const face = options.inject();
-        const source = face.hooks.git;
-        const useGit = (selector) => selector(useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot));
-        const Entry = () => <Component useGit={useGit} usePanelInfo={(selector) => selector({ activePanelId: null })} actions={face.actions} />;
+        const hooks = Object.fromEntries(Object.entries(face.hooks).map(([name, source]) => [`use${name[0].toUpperCase()}${name.slice(1)}`, (selector) => selector(useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot))]));
+        const usePanelInfo = (selector) => selector(useSyncExternalStore(panelInfo.subscribe, panelInfo.getSnapshot, panelInfo.getSnapshot));
+        const Entry = () => <Component {...hooks} usePanelInfo={usePanelInfo} actions={face.actions} />;
         entries.set(options.name, Entry); render();
         return () => { entries.delete(options.name); render(); };
       },
     },
   };
   plugin.apply(ctx);
-  window.__gitTest = { server, requests, unload: () => { for (const effect of effects.reverse()) effect(); root.unmount(); } };
+  let pluginUnloaded = false;
+  const unloadPlugin = () => { if (pluginUnloaded) return; pluginUnloaded = true; for (const effect of effects.reverse()) effect(); root.unmount(); };
+  window.__gitTest = {
+    server, requests, nativeMenuClicks, mountWindowsMenu, unloadPlugin,
+    setWorkspaces: (items) => ctx.workspaces.list.set({ items }),
+    removeWindowsMenu: () => { menuHost?.remove(); menuHost = null; },
+    setSession: (active) => ctx.sessions.list.set({ byId: active ? { session1: { id: 'session1', cwd: server.root, retainedBy: { mainView: 1 } } } : {} }),
+    setPanel: (activePanelId) => panelInfo.set({ activePanelId }),
+    unload: () => { unloadPlugin(); menuHost?.remove(); document.documentElement.removeAttribute('data-windows-titlebar'); },
+  };
 };

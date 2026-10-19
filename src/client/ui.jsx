@@ -19,7 +19,7 @@ export function Notice({ state, actions }) {
   if (!state.error && !state.notice) return null;
   return <div className={`git-notice ${state.error ? 'git-notice-error' : ''}`} role={state.error ? 'alert' : 'status'}>
     {state.error ? <AlertCircle size={14} aria-hidden="true" /> : <Check size={14} aria-hidden="true" />}
-    <span>{state.error?.message || state.notice}</span>
+    <span title={state.error?.message || state.notice}>{state.error?.message || state.notice}</span>
     <IconButton icon={X} label="关闭消息" onClick={actions.dismissMessage} />
   </div>;
 }

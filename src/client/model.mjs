@@ -1,3 +1,5 @@
+import { loadSettings, saveSettings as persistSettings, validateSettings, matchesShortcut } from './settings.mjs';
+
 const newTab = (kind, id) => ({ id, kind, ref: '', search: '', author: '', path: '', dateRange: '', commits: [], hasMore: false, selected: null, detail: null, loading: false });
 const errorMessage = (error) => error?.message || String(error);
 const makeExpected = (data) => ({ head: data?.head ?? null, branch: data?.branch ?? null });
@@ -12,10 +14,12 @@ export class GitModel {
     this.listeners = new Set();
     this.requests = new Map();
     this.sequence = 1;
+    this.aiSequence = 0;
+    this.modelsSequence = 0;
     this.generation = 0;
     let height = 380;
     try { height = Number(storage?.getItem('dsh-git.height')) || height; } catch { /* Browser storage may be disabled. */ }
-    this.state = { open: false, maximized: false, height: Math.max(230, Math.min(800, height)), tabs: [newTab('git', 'git-1')], activeTab: 'git-1', workspaceId: '', worktreePath: undefined, workspaces: [], hasSession: false, data: null, loading: false, busy: '', error: null, notice: '', dialog: null, diff: null, sidebarTab: 'branches' };
+    this.state = { settings: loadSettings(storage), aiModels: [], aiModelsLoading: false, aiModelsError: '', aiModelsErrorCode: '', aiBusy: false, aiDraft: null, open: false, maximized: false, height: Math.max(230, Math.min(800, height)), tabs: [newTab('git', 'git-1')], activeTab: 'git-1', workspaceId: '', worktreePath: undefined, workspaces: [], hasSession: false, data: null, loading: false, busy: '', error: null, notice: '', dialog: null, diff: null, sidebarTab: 'branches' };
     this.source = { getSnapshot: () => this.state, subscribe: (listener) => { this.listeners.add(listener); return () => this.listeners.delete(listener); } };
   }
   patch(update) { if (this.disposed) return; this.state = { ...this.state, ...update }; for (const listener of this.listeners) listener(); }
@@ -31,7 +35,19 @@ export class GitModel {
       const result = await this.call(payload, controller.signal);
       controller.signal.throwIfAborted();
       if (!result || typeof result.ok !== 'boolean') throw new Error('Git 响应格式不正确，请检查插件与宿主版本。');
-      if (!result.ok) { const error = new Error(result.error.message); error.code = result.error.code; throw error; }
+      if (!result.ok) {
+        const error = new Error(result.error.message);
+        error.code = result.error.code;
+        error.details = result.error.details;
+        const issues = Array.isArray(error.details?.issues) ? error.details.issues : [];
+        const rejectedOperation = issues.some((issue) => Array.isArray(issue.path) && issue.path.join('.') === 'payload.op');
+        const rejectedMutation = issues.some((issue) => Array.isArray(issue.path) && issue.path.join('.') === 'payload.mutation.action');
+        if (error.code === 'INVALID_REQUEST' && ((['aiModels', 'aiCommit'].includes(payload.op) && rejectedOperation) || (payload.op === 'mutate' && payload.mutation?.action === 'commitAndPush' && rejectedMutation))) {
+          error.code = 'HOST_UPGRADE_REQUIRED';
+          error.message = 'Git 插件前后端版本不一致：运行中的宿主尚不支持此功能。请完全退出并重启 DSH；仅刷新页面不会重载宿主插件。若仍失败，请确认当前 profile 已更新插件。';
+        }
+        throw error;
+      }
       return result.value;
     } catch (error) {
       if (controller.signal.aborted) throw controller.signal.reason;
@@ -78,7 +94,7 @@ export class GitModel {
   resetScope(update) {
     this.generation++;
     for (const controller of this.requests.values()) controller.abort();
-    this.patch({ ...update, data: null, loading: false, error: null, diff: null, dialog: null, tabs: this.state.tabs.map((tab) => ({ ...newTab(tab.kind, tab.id) })) });
+    this.patch({ ...update, data: null, loading: false, error: null, notice: '', aiBusy: false, aiDraft: null, aiModelsLoading: false, diff: null, dialog: null, tabs: this.state.tabs.map((tab) => ({ ...newTab(tab.kind, tab.id) })) });
     if (this.state.open) void this.refresh();
   }
   async refresh({ quiet = false } = {}) {
@@ -164,21 +180,96 @@ export class GitModel {
     } catch (error) { if (error.name !== 'AbortError' && generation === this.generation) this.patch({ diff: { title, loading: false, error: errorMessage(error), text: '' } }); }
   };
   closeDiff = () => { this.requests.get('diff')?.abort(); this.patch({ diff: null }); };
-  showDialog = (dialog) => this.patch({ dialog: { ...dialog, expected: makeExpected(this.state.data) }, error: null });
-  closeDialog = () => { if (!this.state.busy) this.patch({ dialog: null }); };
+  showDialog = (dialog) => {
+    if (this.state.busy) return;
+    this.requests.get('aiCommit')?.abort();
+    this.patch({ dialog: { ...dialog, expected: makeExpected(this.state.data) }, error: null, aiBusy: false, aiDraft: null });
+    if (dialog.type === 'settings') void this.loadAiModels();
+    if (dialog.type === 'commit' && dialog.ai) void this.generateCommit();
+  };
+  closeDialog = () => {
+    if (this.state.busy) return;
+    this.requests.get('aiCommit')?.abort();
+    this.patch({ dialog: null, aiBusy: false, aiDraft: null });
+  };
+  loadAiModels = async () => {
+    if (this.disposed) return;
+    const sequence = ++this.modelsSequence;
+    this.patch({ aiModelsLoading: true, aiModelsError: '', aiModelsErrorCode: '' });
+    try {
+      const result = await this.request('aiModels', { op: 'aiModels' });
+      if (sequence !== this.modelsSequence) return;
+      this.patch({ aiModels: result.models || [], aiModelsLoading: false, aiModelsError: result.available === false ? 'DSH 尚未启用可用的模型服务。请先在宿主中配置模型。' : '', aiModelsErrorCode: result.available === false ? 'AI_UNAVAILABLE' : '' });
+    } catch (error) {
+      if (sequence !== this.modelsSequence) return;
+      if (error.name !== 'AbortError') this.patch({ aiModelsLoading: false, aiModelsError: errorMessage(error), aiModelsErrorCode: error.code || '', ...(error.code === 'HOST_UPGRADE_REQUIRED' ? { aiModels: [] } : {}) });
+      else this.patch({ aiModelsLoading: false });
+    }
+  };
+  saveSettings = (settings) => {
+    const error = validateSettings(settings);
+    if (error) { this.patch({ error: { message: error } }); return false; }
+    if (!persistSettings(this.storage, settings)) {
+      this.patch({ error: { message: '无法保存设置，请检查浏览器是否允许本地存储。' } });
+      return false;
+    }
+    this.patch({ settings: loadSettings(this.storage), dialog: null, error: null, notice: 'Git 设置已保存。' });
+    return true;
+  };
+  generateCommit = async () => {
+    const dialog = this.state.dialog;
+    if (this.disposed || dialog?.type !== 'commit' || this.state.busy || this.state.aiBusy) return false;
+    if (!this.state.data?.files?.some((file) => file.staged)) {
+      this.patch({ error: { message: '请先选择并暂存要提交的文件，再生成 AI 提交信息。' } });
+      return false;
+    }
+    const generation = this.generation;
+    const sequence = ++this.aiSequence;
+    const { provider, model, prompt } = this.state.settings;
+    this.patch({ aiBusy: true, error: null });
+    try {
+      const draft = await this.request('aiCommit', { op: 'aiCommit', ...this.scope(), expected: dialog.expected, provider, model, prompt });
+      if (generation !== this.generation || sequence !== this.aiSequence || this.state.dialog !== dialog) return false;
+      this.patch({ aiBusy: false, aiDraft: { ...draft, stale: false }, notice: 'AI 提交信息已生成，等待你预览并确认。' });
+      return true;
+    } catch (error) {
+      if (generation === this.generation && sequence === this.aiSequence && this.state.dialog === dialog) this.patch({ aiBusy: false, ...(error.name === 'AbortError' ? {} : { error: { message: errorMessage(error), code: error.code } }) });
+      return false;
+    }
+  };
+  cancelAi = () => {
+    this.aiSequence++;
+    this.requests.get('aiCommit')?.abort();
+    this.patch({ aiBusy: false });
+  };
+  handleShortcut = (event) => {
+    if (this.disposed || !this.state.open || this.state.dialog || this.state.diff || this.state.busy || this.state.aiBusy || this.state.data?.state !== 'ready' || event.defaultPrevented || event.repeat || event.isComposing) return;
+    const target = event.composedPath?.()[0] || event.target;
+    // Shortcuts belong to this plugin, never to the host editor or another modal.
+    const activeOverlay = [...(globalThis.document?.querySelectorAll('[role="dialog"], [role="menu"]') || [])].some((element) => !element.closest('[hidden], [aria-hidden="true"], [inert]') && element.getClientRects().length > 0);
+    if (!target?.closest?.('#dsh-git-panel') || target.closest('input, textarea, select, [role="combobox"], [contenteditable]:not([contenteditable="false"])') || activeOverlay) return;
+    const shortcuts = this.state.settings.shortcuts;
+    const action = Object.keys(shortcuts).find((key) => matchesShortcut(event, shortcuts[key]));
+    const data = this.state.data;
+    const branch = data.branches.find((item) => item.kind === 'local' && item.name === data.branch);
+    if (['commit', 'aiCommit'].includes(action) && data.files.length && !data.operation) { event.preventDefault(); this.showDialog({ type: 'commit', ai: action === 'aiCommit' }); }
+    if (action === 'push' && branch && data.remotes.length) { event.preventDefault(); this.showDialog({ type: 'push', branch }); }
+    if (action === 'fetch' && data.remotes.length) { event.preventDefault(); this.showDialog({ type: 'confirm', title: '获取远程更新', description: '获取所有远程更新并清理过期跟踪引用，不会自动合并或推送。', mutation: { action: 'fetch' } }); }
+  };
   async mutate(mutation, { expected, keepDialog = false } = {}) {
     const initializing = mutation.action === 'initialize';
-    if (this.disposed || this.state.busy || this.state.data?.state !== (initializing ? 'not-repository' : 'ready')) return false;
+    if (this.disposed || this.state.busy || this.state.aiBusy || this.state.data?.state !== (initializing ? 'not-repository' : 'ready')) return false;
     for (const [name, controller] of this.requests) if (name !== 'mutate') controller.abort();
-    this.patch({ busy: mutation.action, error: null, notice: '', loading: false });
+    this.patch({ busy: mutation.action, error: null, notice: '', loading: false, aiModelsLoading: false });
     try {
       const result = await this.request('mutate', initializing ? { op: 'initialize', workspaceId: this.state.workspaceId, confirmed: true } : { op: 'mutate', ...this.scope(), expected: expected ?? makeExpected(this.state.data), confirmed: true, mutation });
-      this.patch({ notice: result.message || '操作已完成。', ...(keepDialog ? {} : { dialog: null }) });
+      this.patch({ notice: result.message || '操作已完成。', ...(['stage', 'unstage'].includes(mutation.action) && this.state.aiDraft ? { aiDraft: { ...this.state.aiDraft, stale: true } } : {}), ...(keepDialog ? {} : { dialog: null, aiDraft: null }) });
       clearTimeout(this.noticeTimer);
       this.noticeTimer = setTimeout(() => this.patch({ notice: '' }), 6500);
       return true;
     } catch (error) {
-      this.patch({ error: { message: errorMessage(error), code: error.code } });
+      const committed = error.details?.committed === true || error.details?.doNotRetryCommit === true;
+      this.patch({ error: { message: errorMessage(error), code: error.code, details: error.details }, ...(committed ? { dialog: null, aiDraft: null } : {}), ...(error.code === 'STALE_INDEX' && this.state.aiDraft ? { aiDraft: { ...this.state.aiDraft, stale: true } } : {}) });
       return false;
     } finally {
       if (!this.disposed) {

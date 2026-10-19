@@ -1,5 +1,6 @@
 import { GitService } from './host/git-service.mjs';
 import { GitError, redact } from './host/git-runner.mjs';
+import { AiCommitService } from './host/ai-commit.mjs';
 import { Envelope, PluginConfig } from './shared/protocol.mjs';
 
 export const name = 'dsh-git';
@@ -29,7 +30,7 @@ export function createHandler(service) {
 }
 
 export function apply(ctx, config) {
-  const service = new GitService(ctx.workspaceRegistry, config);
+  const service = new GitService(ctx.workspaceRegistry, config, undefined, new AiCommitService(() => ctx.get('llm')));
   ctx.effect(() => () => service.dispose(), 'dsh-git: processes and queued operations');
   // Public, carrier-neutral Fetch registry: inherits Connection authentication,
   // Host/Origin checks and Desktop IPC instead of opening a separate HTTP server.

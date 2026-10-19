@@ -2,6 +2,7 @@ import path from 'node:path';
 import { realpath, stat, lstat, open } from 'node:fs/promises';
 import { GitRunner, GitError } from './git-runner.mjs';
 import { parseBranches, parseLog, parseNameStatus, parseStatus, parseWorktrees, LOG_FORMAT } from './parsers.mjs';
+import { AiCommitService, AI_LIMITS } from './ai-commit.mjs';
 import { PluginConfig, Request } from '../shared/protocol.mjs';
 
 const keyPath = (value) => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value);
@@ -9,18 +10,20 @@ const samePath = (a, b) => keyPath(a) === keyPath(b);
 const inside = (root, target) => { const relative = path.relative(keyPath(root), keyPath(target)); return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative)); };
 const exists = async (file) => { try { await stat(file); return true; } catch (e) { if (['ENOENT', 'ENOTDIR'].includes(e.code)) return false; throw e; } };
 const operationNames = { merge: '合并', rebase: '变基', 'cherry-pick': '优选（拣选提交）' };
-const dangerous = new Set(['deleteBranch', 'merge', 'rebase', 'cherryPick', 'checkoutRebase', 'removeWorktree', 'continueOperation', 'abortOperation', 'push', 'pull', 'pullRemote', 'commit']);
+const dangerous = new Set(['deleteBranch', 'merge', 'rebase', 'cherryPick', 'checkoutRebase', 'removeWorktree', 'continueOperation', 'abortOperation', 'push', 'pull', 'pullRemote', 'commit', 'commitAndPush']);
 
 /** All authority comes from a registered workspace id, never a browser cwd. */
 export class GitService {
-  constructor(workspaces, config = {}, runner) {
+  constructor(workspaces, config = {}, runner, aiService) {
     this.workspaces = workspaces;
     this.config = PluginConfig.parse(config);
     this.runner = runner ?? new GitRunner(this.config);
+    this.ai = aiService ?? new AiCommitService();
     this.locks = new Map();
   }
   async execute(raw, signal) {
     const request = Request.parse(raw);
+    if (request.op === 'aiModels') return this.ai.models(signal);
     if (request.op === 'initialize') return this.initialize(request, signal);
     if (request.op === 'snapshot') return this.snapshot(request, signal);
     const repo = await this.repository(request, signal);
@@ -32,6 +35,7 @@ export class GitService {
         return this.mutate(fresh, request, signal);
       });
     }
+    if (request.op === 'aiCommit') return this.aiCommit(repo, request, signal);
     if (request.op === 'history') return this.history(repo, request, signal);
     if (request.op === 'commit') return this.commit(repo, request.hash, signal);
     if (request.op === 'diff') return this.diff(repo, request, signal);
@@ -116,8 +120,99 @@ export class GitService {
       this.git(repo, ['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=all'], signal),
       this.branches(repo, signal), this.worktrees(repo, signal), this.git(repo, ['remote'], signal), this.operation(repo),
     ]);
+    const parsed = parseStatus(status.stdout);
+    const stagedTree = await this.indexTree(repo, signal, true);
     const { gitDir, commonDir, ...publicRepo } = repo;
-    return { ...publicRepo, ...parseStatus(status.stdout), branches, worktrees, remotes: remotes.stdout.trim().split('\n').filter(Boolean), operation };
+    return { ...publicRepo, ...parsed, stagedTree, branches, worktrees, remotes: remotes.stdout.trim().split('\n').filter(Boolean), operation };
+  }
+  assertExpected(repo, expected) {
+    if (repo.head !== expected.head || repo.branch !== expected.branch) throw new GitError('STALE_REPOSITORY', 'HEAD 或当前分支已变化。已阻止旧页面操作，请刷新后重试。');
+  }
+  async indexTree(repo, signal, tolerateConflicts = false) {
+    // write-tree hashes the actual index (not the working tree). It can populate
+    // Git's tree object/cache, but never stages files, creates a commit, or runs hooks.
+    const result = await this.git(repo, ['write-tree'], signal, { allow: [0, 1, 128] });
+    const tree = result.stdout.trim();
+    if (result.code === 0 && /^[a-f\d]{40,64}$/i.test(tree)) return tree;
+    if (tolerateConflicts) return null;
+    throw new GitError('UNRESOLVED_CONFLICTS', '无法读取暂存区树，请先解决并暂存所有冲突。');
+  }
+  async staged(repo, signal, expectedTree) {
+    const status = parseStatus((await this.git(repo, ['status', '--porcelain=v2', '-z'], signal)).stdout);
+    if (status.files.some((file) => file.conflict)) throw new GitError('UNRESOLVED_CONFLICTS', '请先解决并暂存所有冲突。');
+    const tree = await this.indexTree(repo, signal);
+    if (expectedTree && tree !== expectedTree) throw new GitError('STALE_INDEX', '暂存内容在预览后发生变化，已阻止提交。请刷新并重新检查提交信息。');
+    if (!status.files.some((file) => file.staged)) throw new GitError('NOTHING_STAGED', '请先暂存要提交的文件。');
+    return tree;
+  }
+  async commitFailure(repo, cause) {
+    let head;
+    try {
+      // The original request may already be cancelled. This independent,
+      // read-only observation remains bounded and still inherits runner lifetime.
+      const probe = AbortSignal.timeout(Math.min(this.config.commandTimeoutMs, 5000));
+      const result = await this.git(repo, ['rev-parse', '--verify', '--quiet', 'HEAD'], probe, { readOnly: true, allow: [0, 1], maxBytes: 256 });
+      const value = result.stdout.trim();
+      if (result.code === 0 && /^(?:[a-f\d]{40}|[a-f\d]{64})$/i.test(value)) head = value;
+      else if (result.code === 1 && !value) head = null; // Still-unborn HEAD is a known outcome.
+      else throw new GitError('INVALID_GIT_OUTPUT', '无法核对提交后的 HEAD。');
+    } catch (error) {
+      return new GitError('COMMIT_OUTCOME_UNKNOWN', '提交命令未正常完成，且无法核对本地结果。请检查本地 HEAD 和提交记录，勿重复提交；未自动推送。', { committed: null, doNotRetryCommit: true, causeCode: cause?.code || 'GIT_ERROR', inspectionCode: error?.code || 'GIT_ERROR' });
+    }
+    if (head !== repo.head) return new GitError('COMMIT_FAILED_AFTER_WRITE', '提交命令未正常完成，HEAD 已变化，本地提交可能已完成（也可能来自其他 Git 操作）。请检查，勿重复提交；未自动推送。', { committed: true, doNotRetryCommit: true, previousHead: repo.head, head, causeCode: cause?.code || 'GIT_ERROR' });
+    return cause;
+  }
+  async commitIndex(repo, mutation, signal) {
+    await this.staged(repo, signal, mutation.stagedTree);
+    let result;
+    try { result = await this.git(repo, ['commit', '-m', mutation.message], signal, { readOnly: false }); }
+    catch (error) { throw await this.commitFailure(repo, error); }
+    if (mutation.stagedTree) {
+      let tree;
+      try { tree = (await this.git(repo, ['rev-parse', '--verify', 'HEAD^{tree}'], signal)).stdout.trim(); }
+      catch (error) {
+        throw new GitError('COMMIT_VERIFICATION_FAILED', '本地提交已成功，但无法核对提交内容；未推送。请勿再次提交，请刷新后检查本地提交。', { committed: true, causeCode: error?.code || 'GIT_ERROR' });
+      }
+      // Respect user hooks. If one stages more content while Git commits, do not
+      // claim that the preview was preserved, roll back history, or push it onward.
+      if (tree !== mutation.stagedTree) throw new GitError('COMMITTED_TREE_CHANGED', '本地提交已成功，但提交内容与预览不一致（可能被 Git hooks 修改）；未推送。请勿再次提交，请检查本地提交。', { committed: true, expectedTree: mutation.stagedTree, committedTree: tree });
+    }
+    return result;
+  }
+  async freshExpected(repo, request, signal) {
+    const fresh = await this.repository(request, signal);
+    if (fresh.state !== 'ready' || !samePath(fresh.commonDir, repo.commonDir) || !samePath(fresh.root, repo.root)) throw new GitError('REPOSITORY_CHANGED', '仓库已变化，请刷新后重试。');
+    this.assertExpected(fresh, request.expected);
+    return fresh;
+  }
+  async aiCommit(repo, request, signal) {
+    const captured = await this.serial(repo.commonDir, async () => {
+      const fresh = await this.freshExpected(repo, request, signal);
+      if (await this.operation(fresh)) throw new GitError('OPERATION_IN_PROGRESS', '仓库正在执行 Git 操作，请先解决冲突并完成或中止操作。');
+      const stagedTree = await this.staged(fresh, signal);
+      // A tree-to-tree diff is pinned to the captured index and HEAD, even if an
+      // external Git process stages files while the provider request is running.
+      const args = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', '--submodule=short', '--find-renames', '--unified=3'];
+      if (fresh.head) args.push(fresh.head, stagedTree);
+      else {
+        // GitRunner supplies EOF on stdin: mktree writes only the empty tree object
+        // (for either SHA-1 or SHA-256), so even the first-commit diff is pinned.
+        const empty = (await this.git(fresh, ['mktree'], signal)).stdout.trim();
+        if (!/^[a-f\d]{40,64}$/i.test(empty)) throw new GitError('INVALID_GIT_OUTPUT', '无法确定空 Git 树。');
+        args.push(empty, stagedTree);
+      }
+      args.push('--');
+      const diff = await this.git(fresh, args, signal, { truncate: true, maxBytes: AI_LIMITS.diffBytes });
+      if (await this.indexTree(fresh, signal) !== stagedTree) throw new GitError('STALE_INDEX', '暂存内容已变化，请刷新后重新生成提交信息。');
+      return { stagedTree, diff: diff.stdout, truncated: diff.truncated };
+    });
+    // Do not hold the mutation lock across a potentially slow model request.
+    const result = await this.ai.generate({ ...request, diff: captured.diff, truncated: captured.truncated }, signal);
+    await this.serial(repo.commonDir, async () => {
+      const fresh = await this.freshExpected(repo, request, signal);
+      if (await this.indexTree(fresh, signal) !== captured.stagedTree) throw new GitError('STALE_INDEX', '生成期间暂存内容已变化，未采用旧提交信息。请刷新后重新生成。');
+    });
+    return { ...result, stagedTree: captured.stagedTree };
   }
   async resolveRef(repo, ref, signal) {
     if (ref !== 'HEAD' && !/^[a-f\d]{40,64}$/i.test(ref)) {
@@ -255,6 +350,16 @@ export class GitService {
     if (matches.size !== 1) throw new GitError(matches.size ? 'AMBIGUOUS_REMOTE' : 'INVALID_REMOTE_MAPPING', matches.size ? '多个远程 fetch 配置映射到了同一引用，无法安全确定目标。请消除映射歧义后重试。' : '无法从 fetch 配置确定此远程分支的真实来源。');
     return [...matches.values()][0];
   }
+  async pushArgs(repo, branch, remote, signal) {
+    const args = ['push', '--no-force', '--no-mirror', '--no-follow-tags'];
+    if (remote) {
+      const remotes = (await this.git(repo, ['remote'], signal)).stdout.trim().split('\n');
+      if (!remotes.includes(remote)) throw new GitError('INVALID_REMOTE', '远程仓库不存在。');
+      return [...args, '--set-upstream', '--', remote, `${branch.ref}:refs/heads/${branch.name}`];
+    }
+    const upstream = await this.upstream(repo, branch, signal);
+    return [...args, '--', upstream.remote, `${branch.ref}:${upstream.ref}`];
+  }
   async checkout(repo, ref, signal) {
     const branches = await this.branches(repo, signal);
     const branch = branches.find((item) => item.ref === ref || item.name === ref);
@@ -278,7 +383,7 @@ export class GitService {
   }
   async mutate(repo, request, signal) {
     const { mutation: m, expected, confirmed } = request;
-    if (repo.head !== expected.head || repo.branch !== expected.branch) throw new GitError('STALE_REPOSITORY', 'HEAD 或当前分支已变化。已阻止旧页面操作，请刷新后重试。');
+    this.assertExpected(repo, expected);
     if (dangerous.has(m.action) && !confirmed) throw new GitError('CONFIRMATION_REQUIRED', '此操作需要明确确认。');
     const operation = await this.operation(repo);
     if (operation && !['continueOperation', 'abortOperation', 'stage', 'unstage'].includes(m.action)) throw new GitError('OPERATION_IN_PROGRESS', `仓库正在${operationNames[operation]}中。请先解决冲突并继续，或中止操作。`);
@@ -350,11 +455,24 @@ export class GitService {
         break;
       }
       case 'commit': {
-        const status = parseStatus((await this.git(repo, ['status', '--porcelain=v2', '-z'], signal)).stdout);
-        if (!status.files.some((file) => file.staged)) throw new GitError('NOTHING_STAGED', '请先暂存要提交的文件。');
-        if (status.files.some((file) => file.conflict)) throw new GitError('UNRESOLVED_CONFLICTS', '请先解决并暂存所有冲突。');
-        result = await write(['commit', '-m', m.message]);
+        result = await this.commitIndex(repo, m, signal);
         break;
+      }
+      case 'commitAndPush': {
+        if (!repo.branch || (m.branch !== repo.branch && m.branch !== `refs/heads/${repo.branch}`)) throw new GitError('INVALID_BRANCH', '提交并推送只能用于当前签出的本地分支。');
+        await this.checkName(repo, repo.branch, signal);
+        // Validate the destination before committing. Unborn branches can create
+        // their first commit and upstream together when a remote is explicit.
+        const branch = repo.head ? await this.localBranch(repo, m.branch, signal) : { name: repo.branch, ref: `refs/heads/${repo.branch}` };
+        const pushArgs = await this.pushArgs(repo, branch, m.remote, signal);
+        const committed = await this.commitIndex(repo, m, signal);
+        try {
+          result = await write(pushArgs, { network: true });
+        } catch (error) {
+          // No retry (and in particular no second commit) is performed here.
+          throw new GitError('PUSH_FAILED_AFTER_COMMIT', `本地提交已成功，但推送未完成。请勿再次提交；请刷新后仅重试推送。${error?.message ? ` ${error.message}` : ''}`, { ...(error instanceof GitError ? error.details : {}), committed: true, branch: branch.name, causeCode: error?.code || 'GIT_ERROR' });
+        }
+        return { message: [committed.stderr || committed.stdout?.trim(), result.stderr || result.stdout?.trim()].filter(Boolean).join('\n') || '本地提交和推送已完成。', committed: true, pushed: true };
       }
       case 'pullRemote': {
         await this.clean(repo, signal);
@@ -382,14 +500,7 @@ export class GitService {
       }
       case 'push': {
         const branch = await this.localBranch(repo, m.branch, signal);
-        if (m.remote) {
-          const remotes = (await this.git(repo, ['remote'], signal)).stdout.trim().split('\n');
-          if (!remotes.includes(m.remote)) throw new GitError('INVALID_REMOTE', '远程仓库不存在。');
-          result = await write(['push', '--set-upstream', '--', m.remote, `${branch.ref}:refs/heads/${branch.name}`], { network: true });
-        } else {
-          const upstream = await this.upstream(repo, branch, signal);
-          result = await write(['push', '--', upstream.remote, `${branch.ref}:${upstream.ref}`], { network: true });
-        }
+        result = await write(await this.pushArgs(repo, branch, m.remote, signal), { network: true });
         break;
       }
       case 'setUpstream': {
@@ -439,7 +550,7 @@ export class GitService {
     return { message: result?.stderr || result?.stdout?.trim() || '操作已完成。' };
   }
   async dispose() {
-    await this.runner.dispose();
+    await Promise.all([this.runner.dispose(), this.ai.dispose?.()]);
     await Promise.allSettled([...this.locks.values()]);
   }
 }

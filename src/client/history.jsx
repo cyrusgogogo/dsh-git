@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { ArrowDownToLine, Check, Cherry, ChevronRight, Copy, FileCode, Folder, GitCommitHorizontal, Minus, Plus, X } from 'lucide-react';
+import { ArrowDownToLine, CalendarDays, Check, Cherry, ChevronRight, CircleDot, Copy, FileCode, Folder, GitBranch, GitCommitHorizontal, GitFork, Minus, Plus, Sparkles, Tag, X } from 'lucide-react';
+import { SelectControl, SelectGroup, SelectItem, SelectLabel, SelectSeparator } from './select.jsx';
 import { BranchList } from './branches.jsx';
 import { EmptyState, IconButton, SearchInput, Spinner, confirmAction, navigateTabs, shortRef } from './ui.jsx';
 import { GRAPH_COLORS, layoutGraph, relativeDate } from './graph.mjs';
@@ -12,7 +13,7 @@ export function ChangesList({ state, actions }) {
   return <div className="git-changes-list">{groups.map(([kind, label, items]) => <section key={kind}>
     <div className="git-change-group"><span>{label} <span className="git-muted">{items.length}</span></span>{items.length > 0 && <IconButton icon={kind === 'staged' ? Minus : Plus} label={kind === 'staged' ? '取消暂存全部文件' : '暂存全部更改'} disabled={Boolean(state.busy)} onClick={() => actions.mutate({ action: kind === 'staged' ? 'unstage' : 'stage', paths: items.map((file) => file.path) })} />}</div>
     {items.map((file) => <div key={file.path} className="git-change-row"><button type="button" className="git-change-file" title={file.path} onClick={() => actions.showDiff({ kind, path: file.path }, `${label} · ${file.path}`)}><FileCode size={13} aria-hidden="true" /><span>{file.path}</span><b className={`git-file-status git-status-${file.conflict ? 'U' : kind === 'staged' ? file.index : file.worktree}`}>{file.conflict ? '!' : kind === 'staged' ? file.index : file.worktree === '?' ? '+' : file.worktree}</b></button><IconButton icon={kind === 'staged' ? Minus : Plus} label={`${kind === 'staged' ? '取消暂存' : '暂存'} ${file.path}`} disabled={Boolean(state.busy)} onClick={() => actions.mutate({ action: kind === 'staged' ? 'unstage' : 'stage', paths: [file.path] })} /></div>)}
-  </section>)}<button type="button" className="git-button git-commit-trigger" disabled={Boolean(state.busy) || Boolean(data.operation)} onClick={() => actions.showDialog({ type: 'commit' })}><GitCommitHorizontal size={14} aria-hidden="true" />提交更改…</button></div>;
+  </section>)}<div className="git-change-commit-actions"><button type="button" className="git-button git-commit-trigger" disabled={Boolean(state.busy) || Boolean(data.operation)} onClick={() => actions.showDialog({ type: 'commit' })}><GitCommitHorizontal size={14} aria-hidden="true" />提交更改…</button><button type="button" className="git-button" disabled={Boolean(state.busy) || Boolean(data.operation)} onClick={() => actions.showDialog({ type: 'commit', ai: true })}><Sparkles size={13} aria-hidden="true" />AI 提交</button></div></div>;
 }
 
 export function RepositorySidebar({ state, actions, tab }) {
@@ -49,9 +50,19 @@ export function History({ state, tab, actions }) {
   return <section className="git-history" aria-label="提交历史"><div className="git-history-toolbar">
     <SearchInput value={tab.search} onChange={(search) => actions.filter({ search })} placeholder="文本或提交信息" label="搜索提交" />
     <div className="git-history-filters" role="group" aria-label="提交筛选">
-      <label className={`git-history-filter ${tab.ref ? 'is-active' : ''}`}><span>分支</span><select aria-label="按分支筛选" value={tab.ref} title={shortRef(tab.ref) || '所有分支'} onChange={(event) => actions.filter({ ref: event.target.value })}><option value="">全部</option>{tab.ref && !branches.some((branch) => branch.ref === tab.ref) && <option value={tab.ref}>{shortRef(tab.ref)}</option>}{[['local', '本地分支'], ['remote', '远程分支'], ['tag', '标签']].map(([kind, label]) => <optgroup key={kind} label={label}>{branches.filter((branch) => branch.kind === kind).map((branch) => <option key={branch.ref} value={branch.ref}>{branch.name}</option>)}</optgroup>)}</select></label>
-      <label className={`git-history-filter ${tab.author ? 'is-active' : ''}`}><span>用户</span><input aria-label="按用户筛选" title="按作者姓名或邮箱筛选" value={tab.author} onChange={(event) => actions.filter({ author: event.target.value })} placeholder="姓名或邮箱" maxLength={150} /></label>
-      <label className={`git-history-filter ${tab.dateRange ? 'is-active' : ''}`}><span>日期</span><select aria-label="按日期筛选" title="按 Git 提交时间筛选" value={tab.dateRange} onChange={(event) => actions.filter({ dateRange: event.target.value })}><option value="">不限</option><option value="today">今天</option><option value="7d">最近 7 天</option><option value="30d">最近 30 天</option><option value="90d">最近 90 天</option><option value="1y">最近一年</option></select></label>
+      <SelectControl label="按分支筛选" prefix="分支" value={tab.ref || 'all'} title={shortRef(tab.ref) || '所有分支'} onValueChange={(ref) => actions.filter({ ref: ref === 'all' ? '' : ref })} className={`git-history-filter ${tab.ref ? 'is-active' : ''}`} contentClassName="git-select-branches">
+        <SelectItem value="all" icon={CircleDot}>全部</SelectItem>
+        {tab.ref && !branches.some((branch) => branch.ref === tab.ref) && <SelectItem value={tab.ref} icon={GitBranch}>{shortRef(tab.ref)}</SelectItem>}
+        {[[ 'local', '本地分支', GitBranch ], [ 'remote', '远程分支', GitFork ], [ 'tag', '标签', Tag ]].map(([kind, label, Icon]) => {
+          const items = branches.filter((branch) => branch.kind === kind);
+          return items.length > 0 && <SelectGroup key={kind}><SelectSeparator /><SelectLabel>{label}</SelectLabel>{items.map((branch) => <SelectItem key={branch.ref} value={branch.ref} icon={Icon} title={branch.name}>{branch.name}</SelectItem>)}</SelectGroup>;
+        })}
+      </SelectControl>
+      <label className={`git-history-filter git-history-author ${tab.author ? 'is-active' : ''}`}><span>用户</span><input aria-label="按用户筛选" title="按作者姓名或邮箱筛选" value={tab.author} onChange={(event) => actions.filter({ author: event.target.value })} placeholder="姓名或邮箱" maxLength={150} /></label>
+      <SelectControl label="按日期筛选" prefix="日期" title="按 Git 提交时间筛选" value={tab.dateRange || 'any'} onValueChange={(dateRange) => actions.filter({ dateRange: dateRange === 'any' ? '' : dateRange })} className={`git-history-filter ${tab.dateRange ? 'is-active' : ''}`}>
+        <SelectItem value="any" icon={CalendarDays}>不限</SelectItem><SelectSeparator />
+        {[['today', '今天'], ['7d', '最近 7 天'], ['30d', '最近 30 天'], ['90d', '最近 90 天'], ['1y', '最近一年']].map(([value, label]) => <SelectItem key={value} value={value}>{label}</SelectItem>)}
+      </SelectControl>
     </div>
     <div className="git-history-filter-actions">{hasFilters && <IconButton icon={X} label="清除全部提交筛选" onClick={() => actions.filter({ author: '', path: '', dateRange: '', search: '', ref: '' })} />}</div>
     <button type="button" className="git-button git-cherry-pick" disabled={Boolean(pickBlocked)} title={pickBlocked || `优选 ${selected.hash.slice(0, 8)} 到 ${state.data.branch}（cherry-pick）`} onClick={() => selected && confirmAction(actions, '优选提交（cherry-pick）', `将 ${selected.hash.slice(0, 8)}「${selected.subject}」的更改应用到当前分支 ${state.data.branch}，并创建新提交。不切换分支，不自动暂存现有改动。发生冲突时会保留现场，可解决并暂存后继续，或中止优选。`, { action: 'cherryPick', hash: selected.hash })}><Cherry size={13} aria-hidden="true" />优选</button>

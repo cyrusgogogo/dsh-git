@@ -1,4 +1,5 @@
 import { GitModel } from './model.mjs';
+import { createMenuEntryTarget } from './entry-target.mjs';
 import { GitShell, GitToolbarButton } from './panel.jsx';
 import styles from './styles.css';
 
@@ -13,11 +14,15 @@ export function apply(ctx) {
     setSidebarTab: model.setSidebarTab, filter: model.filter, selectCommit: model.selectCommit,
     showDiff: model.showDiff, closeDiff: model.closeDiff, showDialog: model.showDialog, closeDialog: model.closeDialog,
     dismissMessage: model.dismissMessage,
+    loadAiModels: model.loadAiModels, saveSettings: model.saveSettings,
+    generateCommit: model.generateCommit, cancelAi: model.cancelAi,
     refresh: () => model.refresh(), loadMore: () => model.loadHistory(true),
     mutate: (mutation, options) => model.mutate(mutation, options), copy: (text) => model.copy(text),
   };
-  const face = () => ({ hooks: { git: model.source }, actions });
+  const menuEntry = createMenuEntryTarget();
+  const face = () => ({ hooks: { git: model.source, gitMenuEntry: menuEntry }, actions });
   ctx.effect(() => {
+    const offMenuEntry = menuEntry.mount();
     const style = document.createElement('style');
     style.dataset.dshGit = '';
     style.textContent = styles;
@@ -30,11 +35,13 @@ export function apply(ctx) {
     const interval = setInterval(refresh, 10000);
     window.addEventListener('focus', refresh);
     document.addEventListener('visibilitychange', refresh);
+    document.addEventListener('keydown', model.handleShortcut);
     return () => {
       clearInterval(interval);
       window.removeEventListener('focus', refresh);
       document.removeEventListener('visibilitychange', refresh);
-      offWorkspace(); offSessions();
+      document.removeEventListener('keydown', model.handleShortcut);
+      offWorkspace(); offSessions(); offMenuEntry();
       model.dispose(); style.remove();
     };
   }, 'dsh-git: model, style and refresh subscriptions');
