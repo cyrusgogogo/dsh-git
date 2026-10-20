@@ -15,11 +15,13 @@ export class GitModel {
     this.requests = new Map();
     this.sequence = 1;
     this.aiSequence = 0;
+    this.aiPreparationSequence = 0;
+    this.snapshotSequence = 0;
     this.modelsSequence = 0;
     this.generation = 0;
     let height = 380;
     try { height = Number(storage?.getItem('dsh-git.height')) || height; } catch { /* Browser storage may be disabled. */ }
-    this.state = { settings: loadSettings(storage), aiModels: [], aiModelsLoading: false, aiModelsError: '', aiModelsErrorCode: '', aiBusy: false, aiDraft: null, open: false, maximized: false, height: Math.max(230, Math.min(800, height)), tabs: [newTab('git', 'git-1')], activeTab: 'git-1', workspaceId: '', worktreePath: undefined, workspaces: [], hasSession: false, data: null, loading: false, busy: '', error: null, notice: '', dialog: null, diff: null, sidebarTab: 'branches' };
+    this.state = { settings: loadSettings(storage), aiModels: [], aiModelsLoading: false, aiModelsError: '', aiModelsErrorCode: '', aiBusy: false, aiPreparing: false, aiSelectedPaths: null, aiDraft: null, open: false, maximized: false, height: Math.max(230, Math.min(800, height)), tabs: [newTab('git', 'git-1')], activeTab: 'git-1', workspaceId: '', worktreePath: undefined, workspaces: [], hasSession: false, data: null, loading: false, busy: '', error: null, notice: '', dialog: null, diff: null, sidebarTab: 'branches' };
     this.source = { getSnapshot: () => this.state, subscribe: (listener) => { this.listeners.add(listener); return () => this.listeners.delete(listener); } };
   }
   patch(update) { if (this.disposed) return; this.state = { ...this.state, ...update }; for (const listener of this.listeners) listener(); }
@@ -67,6 +69,7 @@ export class GitModel {
     else if (this.state.workspaceId && !items.some((item) => item.workspaceId === this.state.workspaceId)) this.selectWorkspace('');
   }
   toggle = () => {
+    if (this.state.aiPreparing) return;
     const open = !this.state.open;
     this.patch({ open });
     if (open) void this.refresh();
@@ -93,23 +96,27 @@ export class GitModel {
   };
   resetScope(update) {
     this.generation++;
+    this.aiPreparationSequence++;
+    this.snapshotSequence++;
+    this.preparedAiCommit = null;
     for (const controller of this.requests.values()) controller.abort();
-    this.patch({ ...update, data: null, loading: false, error: null, notice: '', aiBusy: false, aiDraft: null, aiModelsLoading: false, diff: null, dialog: null, tabs: this.state.tabs.map((tab) => ({ ...newTab(tab.kind, tab.id) })) });
+    this.patch({ ...update, data: null, loading: false, error: null, notice: '', aiBusy: false, aiPreparing: false, aiSelectedPaths: null, aiDraft: null, aiModelsLoading: false, diff: null, dialog: null, tabs: this.state.tabs.map((tab) => ({ ...newTab(tab.kind, tab.id) })) });
     if (this.state.open) void this.refresh();
   }
   async refresh({ quiet = false } = {}) {
     if (this.disposed || !this.state.workspaceId || this.state.busy || this.state.loading) return;
     const generation = this.generation;
+    const sequence = ++this.snapshotSequence;
     const old = this.state.data;
     this.patch({ loading: true, ...(quiet ? {} : { error: null }) });
     try {
       const data = await this.request('snapshot', { op: 'snapshot', ...this.scope() });
-      if (generation !== this.generation) return;
+      if (generation !== this.generation || sequence !== this.snapshotSequence) return;
       this.patch({ data, loading: false });
       const changed = old?.head !== data.head || old?.branch !== data.branch || JSON.stringify(old?.branches) !== JSON.stringify(data.branches);
       if (data.state === 'ready' && this.tab()?.kind === 'git' && (!quiet || changed || this.tab().commits.length === 0)) await this.loadHistory();
     } catch (error) {
-      if (generation === this.generation) this.patch({ loading: false, ...(error.name === 'AbortError' ? {} : { error: { message: errorMessage(error), code: error.code } }) });
+      if (generation === this.generation && sequence === this.snapshotSequence) this.patch({ loading: false, ...(error.name === 'AbortError' ? {} : { error: { message: errorMessage(error), code: error.code } }) });
     }
   }
   addTab = (kind) => {
@@ -181,16 +188,93 @@ export class GitModel {
   };
   closeDiff = () => { this.requests.get('diff')?.abort(); this.patch({ diff: null }); };
   showDialog = (dialog) => {
-    if (this.state.busy) return;
+    if (this.disposed || this.state.busy) return;
     this.requests.get('aiCommit')?.abort();
-    this.patch({ dialog: { ...dialog, expected: makeExpected(this.state.data) }, error: null, aiBusy: false, aiDraft: null });
+    this.preparedAiCommit = null;
+    this.patch({ dialog: { ...dialog, expected: makeExpected(this.state.data) }, error: null, aiBusy: false, aiPreparing: false, aiSelectedPaths: null, aiDraft: null });
     if (dialog.type === 'settings') void this.loadAiModels();
-    if (dialog.type === 'commit' && dialog.ai) void this.generateCommit();
+    if (dialog.type === 'commit' && dialog.ai) void this.prepareAiCommit();
   };
   closeDialog = () => {
     if (this.state.busy) return;
     this.requests.get('aiCommit')?.abort();
-    this.patch({ dialog: null, aiBusy: false, aiDraft: null });
+    this.preparedAiCommit = null;
+    this.patch({ dialog: null, aiBusy: false, aiPreparing: false, aiSelectedPaths: null, aiDraft: null });
+  };
+  prepareAiCommit = async () => {
+    const dialog = this.state.dialog;
+    if (this.disposed || dialog?.type !== 'commit' || !dialog.ai || this.state.busy || this.state.aiBusy) return false;
+    const sequence = ++this.aiPreparationSequence;
+    const generation = this.generation;
+    const scope = this.scope();
+    const expected = { ...dialog.expected };
+    let latest = this.state.data;
+    let attempted = false;
+    let completed = 0;
+    let prepared = false;
+    const current = () => !this.disposed && sequence === this.aiPreparationSequence && generation === this.generation && this.state.dialog === dialog && this.state.workspaceId === scope.workspaceId && this.state.worktreePath === scope.worktreePath;
+    const checkCurrent = () => { if (!current()) throw new DOMException('AI preparation superseded', 'AbortError'); };
+    const fail = (code, message) => { const error = new Error(message); error.code = code; throw error; };
+    const checkSnapshot = (data) => {
+      checkCurrent();
+      if (data?.state !== 'ready' || !Array.isArray(data.files)) fail('REPOSITORY_UNAVAILABLE', '仓库暂时不可用，请刷新后重试 AI 提交。');
+      if ((data.head ?? null) !== expected.head || (data.branch ?? null) !== expected.branch) fail('STALE_HEAD', 'HEAD 或当前分支已变化，未继续自动暂存或生成。请重新打开 AI 提交。');
+      if (data.operation) fail('OPERATION_IN_PROGRESS', '仓库正在执行 Git 操作，未自动暂存或生成。请先完成或中止当前操作。');
+      if (data.files.some((file) => file.conflict)) fail('UNRESOLVED_CONFLICTS', '工作区存在冲突，未自动解决或暂存冲突。请先手动处理冲突。');
+    };
+    const publish = (data) => {
+      if (current() && data?.state === 'ready' && Array.isArray(data.files)) this.patch({ data, aiSelectedPaths: data.files.map((file) => file.path) });
+    };
+    // Do not use mutate(): its finally refresh/unlock belongs to one user action,
+    // whereas this preparation owns the entire fixed snapshot -> stage -> verify chain.
+    this.snapshotSequence++;
+    for (const [name, controller] of this.requests) if (name !== 'mutate') controller.abort();
+    clearTimeout(this.noticeTimer);
+    this.patch({ busy: 'stage', aiPreparing: true, aiBusy: false, aiDraft: null, error: null, notice: '正在暂存全部更改…', loading: false, aiModelsLoading: false });
+    try {
+      latest = await this.request('aiPrepareSnapshot', { op: 'snapshot', ...scope });
+      checkCurrent(); publish(latest); checkSnapshot(latest);
+      const paths = [...new Set(latest.files.filter((file) => file.unstaged).map((file) => file.path))];
+      for (let start = 0; start < paths.length; start += 1000) {
+        checkCurrent();
+        attempted = true;
+        await this.request('mutate', { op: 'mutate', ...scope, expected, confirmed: true, mutation: { action: 'stage', paths: paths.slice(start, start + 1000) } });
+        checkCurrent();
+        completed += Math.min(1000, paths.length - start);
+      }
+      // Fixed initial path list: new edits are not chased or silently omitted.
+      latest = await this.request('aiPrepareSnapshot', { op: 'snapshot', ...scope });
+      checkCurrent(); publish(latest); checkSnapshot(latest);
+      if (latest.files.some((file) => file.unstaged)) fail('AI_PREPARATION_CHANGED', '自动暂存期间出现新的未暂存改动，未发送给模型。已暂存内容保留，请检查后重新打开 AI 提交。');
+      if (!latest.files.some((file) => file.staged)) fail('NOTHING_STAGED', '没有可提交的更改，未调用 AI 模型。');
+      this.preparedAiCommit = { dialog, staged: completed > 0, stagedTree: latest.stagedTree || null };
+      prepared = true;
+    } catch (error) {
+      if (current()) {
+        // A failed/aborted stage can have partially updated the index. Read once to
+        // show its actual state; never unstage, retry staging, commit, or push here.
+        if (attempted) {
+          try { latest = await this.request('aiPrepareSnapshot', { op: 'snapshot', ...scope }); } catch { /* Keep the last known snapshot; the error asks the user to inspect. */ }
+        }
+        if (current()) {
+          publish(latest);
+          const prefix = attempted ? completed ? `已完成 ${completed} 个文件的暂存；其余更改也可能已部分暂存，暂存内容已保留。` : '部分更改可能已暂存，暂存内容已保留。' : '';
+          const message = error.name === 'AbortError' ? 'AI 提交准备已停止；未生成提交信息。请检查暂存内容后手写提交信息或重新打开 AI 提交。' : errorMessage(error);
+          this.patch({ notice: '', error: { message: `${prefix}${message}${attempted ? ' 未自动提交或推送；可手写提交信息，或检查后重试。' : ''}`, code: error.name === 'AbortError' ? 'CANCELLED' : error.code || 'AI_PREPARATION_FAILED', details: error.details } });
+        }
+      }
+    } finally {
+      if (current()) {
+        this.patch({ busy: '', aiPreparing: false, notice: prepared ? completed > 0 ? '全部更改已暂存，正在生成提交信息…' : '正在根据已暂存更改生成提交信息…' : '' });
+        if (this.pendingWorkspace !== undefined) {
+          const id = this.pendingWorkspace; this.pendingWorkspace = undefined;
+          if (id !== this.state.workspaceId || this.state.worktreePath) { this.selectWorkspace(id); prepared = false; }
+        }
+      }
+    }
+    if (!prepared || !current()) return false;
+    // Synchronous handoff: no idle tick permits another mutation before aiBusy.
+    return this.generateCommit();
   };
   loadAiModels = async () => {
     if (this.disposed) return;
@@ -218,29 +302,37 @@ export class GitModel {
   };
   generateCommit = async () => {
     const dialog = this.state.dialog;
-    if (this.disposed || dialog?.type !== 'commit' || this.state.busy || this.state.aiBusy) return false;
+    if (this.disposed || dialog?.type !== 'commit' || this.state.busy || this.state.aiPreparing || this.state.aiBusy) return false;
     if (!this.state.data?.files?.some((file) => file.staged)) {
       this.patch({ error: { message: '请先选择并暂存要提交的文件，再生成 AI 提交信息。' } });
       return false;
     }
     const generation = this.generation;
     const sequence = ++this.aiSequence;
+    const preparation = this.preparedAiCommit?.dialog === dialog ? this.preparedAiCommit : null;
     const { provider, model, prompt } = this.state.settings;
     this.patch({ aiBusy: true, error: null });
     try {
       const draft = await this.request('aiCommit', { op: 'aiCommit', ...this.scope(), expected: dialog.expected, provider, model, prompt });
       if (generation !== this.generation || sequence !== this.aiSequence || this.state.dialog !== dialog) return false;
+      if (preparation?.stagedTree && draft.stagedTree !== preparation.stagedTree) {
+        const error = new Error('自动准备后暂存内容已变化，未采用生成结果。请检查后重新打开 AI 提交。');
+        error.code = 'STALE_INDEX';
+        throw error;
+      }
       this.patch({ aiBusy: false, aiDraft: { ...draft, stale: false }, notice: 'AI 提交信息已生成，等待你预览并确认。' });
       return true;
     } catch (error) {
-      if (generation === this.generation && sequence === this.aiSequence && this.state.dialog === dialog) this.patch({ aiBusy: false, ...(error.name === 'AbortError' ? {} : { error: { message: errorMessage(error), code: error.code } }) });
+      if (generation === this.generation && sequence === this.aiSequence && this.state.dialog === dialog) this.patch({ aiBusy: false, notice: '', ...(error.name === 'AbortError' ? {} : { error: { message: preparation?.staged ? `全部更改已暂存，但 AI 生成失败。${errorMessage(error)} 暂存内容已保留；可手写提交信息或重试生成，未自动提交或推送。` : errorMessage(error), code: error.code } }) });
       return false;
     }
   };
   cancelAi = () => {
+    if (this.state.aiPreparing) return;
     this.aiSequence++;
     this.requests.get('aiCommit')?.abort();
-    this.patch({ aiBusy: false });
+    const staged = this.preparedAiCommit?.dialog === this.state.dialog && this.preparedAiCommit.staged;
+    this.patch({ aiBusy: false, ...(staged ? { notice: '全部更改已暂存，AI 生成已停止；可手写提交信息或重试生成。' } : {}) });
   };
   handleShortcut = (event) => {
     if (this.disposed || !this.state.open || this.state.dialog || this.state.diff || this.state.busy || this.state.aiBusy || this.state.data?.state !== 'ready' || event.defaultPrevented || event.repeat || event.isComposing) return;
@@ -252,7 +344,7 @@ export class GitModel {
     const action = Object.keys(shortcuts).find((key) => matchesShortcut(event, shortcuts[key]));
     const data = this.state.data;
     const branch = data.branches.find((item) => item.kind === 'local' && item.name === data.branch);
-    if (['commit', 'aiCommit'].includes(action) && data.files.length && !data.operation) { event.preventDefault(); this.showDialog({ type: 'commit', ai: action === 'aiCommit' }); }
+    if (['commit', 'aiCommit'].includes(action) && (action === 'aiCommit' || data.files.length) && !data.operation) { event.preventDefault(); this.showDialog({ type: 'commit', ai: action === 'aiCommit' }); }
     if (action === 'push' && branch && data.remotes.length) { event.preventDefault(); this.showDialog({ type: 'push', branch }); }
     if (action === 'fetch' && data.remotes.length) { event.preventDefault(); this.showDialog({ type: 'confirm', title: '获取远程更新', description: '获取所有远程更新并清理过期跟踪引用，不会自动合并或推送。', mutation: { action: 'fetch' } }); }
   };
@@ -263,19 +355,20 @@ export class GitModel {
     this.patch({ busy: mutation.action, error: null, notice: '', loading: false, aiModelsLoading: false });
     try {
       const result = await this.request('mutate', initializing ? { op: 'initialize', workspaceId: this.state.workspaceId, confirmed: true } : { op: 'mutate', ...this.scope(), expected: expected ?? makeExpected(this.state.data), confirmed: true, mutation });
-      this.patch({ notice: result.message || '操作已完成。', ...(['stage', 'unstage'].includes(mutation.action) && this.state.aiDraft ? { aiDraft: { ...this.state.aiDraft, stale: true } } : {}), ...(keepDialog ? {} : { dialog: null, aiDraft: null }) });
+      if (['stage', 'unstage'].includes(mutation.action)) this.preparedAiCommit = null;
+      this.patch({ notice: result.message || '操作已完成。', ...(['stage', 'unstage'].includes(mutation.action) && this.state.aiDraft ? { aiDraft: { ...this.state.aiDraft, stale: true } } : {}), ...(keepDialog ? {} : { dialog: null, aiPreparing: false, aiSelectedPaths: null, aiDraft: null }) });
       clearTimeout(this.noticeTimer);
       this.noticeTimer = setTimeout(() => this.patch({ notice: '' }), 6500);
       return true;
     } catch (error) {
       const committed = error.details?.committed === true || error.details?.doNotRetryCommit === true;
-      this.patch({ error: { message: errorMessage(error), code: error.code, details: error.details }, ...(committed ? { dialog: null, aiDraft: null } : {}), ...(error.code === 'STALE_INDEX' && this.state.aiDraft ? { aiDraft: { ...this.state.aiDraft, stale: true } } : {}) });
+      this.patch({ error: { message: errorMessage(error), code: error.code, details: error.details }, ...(committed ? { dialog: null, aiPreparing: false, aiSelectedPaths: null, aiDraft: null } : {}), ...(error.code === 'STALE_INDEX' && this.state.aiDraft ? { aiDraft: { ...this.state.aiDraft, stale: true } } : {}) });
       return false;
     } finally {
       if (!this.disposed) {
         this.patch({ busy: '' });
         await this.refresh({ quiet: true });
-        if (this.pendingWorkspace !== undefined) { const id = this.pendingWorkspace; this.pendingWorkspace = undefined; this.selectWorkspace(id); }
+        if (!this.state.busy && !this.state.aiPreparing && this.pendingWorkspace !== undefined) { const id = this.pendingWorkspace; this.pendingWorkspace = undefined; this.selectWorkspace(id); }
       }
     }
   }

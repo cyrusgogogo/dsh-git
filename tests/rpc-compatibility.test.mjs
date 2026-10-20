@@ -52,6 +52,21 @@ test('old host AI generation and combined submission give the same compatibility
   assert.deepEqual(calls.filter((payload) => payload.op === 'mutate').map((payload) => payload.mutation.action), ['commitAndPush']);
 });
 
+test('automatic AI entry on a staged old host verifies snapshots then reports compatibility without legacy writes', async (t) => {
+  const calls = [];
+  const transport = rpc(oldHost());
+  const model = new GitModel((payload, signal) => { calls.push(payload); return transport(payload, signal); }, { storage: null });
+  t.after(() => model.dispose());
+  model.patch({ workspaceId: 'w', data: { state: 'ready', head: 'a'.repeat(40), branch: 'main', files: [{ path: 'staged.txt', staged: true, unstaged: false }] } });
+  model.showDialog({ type: 'commit', ai: true });
+  for (let count = 0; count < 10 && (model.state.aiPreparing || model.state.aiBusy); count++) await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(calls.map((payload) => payload.op), ['snapshot', 'snapshot', 'aiCommit']);
+  assert.equal(model.state.error.code, 'HOST_UPGRADE_REQUIRED');
+  assert.match(model.state.error.message, /前后端版本不一致/);
+  assert.deepEqual(model.state.aiSelectedPaths, ['staged.txt']);
+  assert.equal(model.state.aiPreparing, false); assert.equal(model.state.busy, '');
+});
+
 test('known-operation field validation errors are not mislabeled as an outdated host', async (t) => {
   const model = new GitModel(rpc(createHandler({ execute: async () => { assert.fail('Invalid input must not execute'); } })), { storage: null });
   t.after(() => model.dispose());

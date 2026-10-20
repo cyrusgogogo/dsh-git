@@ -13,7 +13,18 @@ export function ChangesList({ state, actions }) {
   return <div className="git-changes-list">{groups.map(([kind, label, items]) => <section key={kind}>
     <div className="git-change-group"><span>{label} <span className="git-muted">{items.length}</span></span>{items.length > 0 && <IconButton icon={kind === 'staged' ? Minus : Plus} label={kind === 'staged' ? '取消暂存全部文件' : '暂存全部更改'} disabled={Boolean(state.busy)} onClick={() => actions.mutate({ action: kind === 'staged' ? 'unstage' : 'stage', paths: items.map((file) => file.path) })} />}</div>
     {items.map((file) => <div key={file.path} className="git-change-row"><button type="button" className="git-change-file" title={file.path} onClick={() => actions.showDiff({ kind, path: file.path }, `${label} · ${file.path}`)}><FileCode size={13} aria-hidden="true" /><span>{file.path}</span><b className={`git-file-status git-status-${file.conflict ? 'U' : kind === 'staged' ? file.index : file.worktree}`}>{file.conflict ? '!' : kind === 'staged' ? file.index : file.worktree === '?' ? '+' : file.worktree}</b></button><IconButton icon={kind === 'staged' ? Minus : Plus} label={`${kind === 'staged' ? '取消暂存' : '暂存'} ${file.path}`} disabled={Boolean(state.busy)} onClick={() => actions.mutate({ action: kind === 'staged' ? 'unstage' : 'stage', paths: [file.path] })} /></div>)}
-  </section>)}<div className="git-change-commit-actions"><button type="button" className="git-button git-commit-trigger" disabled={Boolean(state.busy) || Boolean(data.operation)} onClick={() => actions.showDialog({ type: 'commit' })}><GitCommitHorizontal size={14} aria-hidden="true" />提交更改…</button><button type="button" className="git-button" disabled={Boolean(state.busy) || Boolean(data.operation)} onClick={() => actions.showDialog({ type: 'commit', ai: true })}><Sparkles size={13} aria-hidden="true" />AI 提交</button></div></div>;
+  </section>)}</div>;
+}
+
+function ChangesActions({ state, actions }) {
+  const disabled = Boolean(state.busy || state.aiBusy || state.data.operation) || !state.data.files.length;
+  return <div className="git-changes-toolbar">
+    <div className="git-change-commit-actions" role="group" aria-label="更改提交操作">
+      <button type="button" className="git-button git-commit-trigger" disabled={disabled} onClick={() => actions.showDialog({ type: 'commit' })}><GitCommitHorizontal size={14} aria-hidden="true" />提交更改…</button>
+      <button type="button" className="git-button" disabled={disabled || state.data.files.some((file) => file.conflict)} title="自动暂存全部当前改动并生成提交信息；确认后才提交" onClick={() => actions.showDialog({ type: 'commit', ai: true })}><Sparkles size={13} aria-hidden="true" />AI 提交</button>
+    </div>
+    <p className="git-changes-toolbar-hint">AI 将暂存全部改动，确认后才提交</p>
+  </div>;
 }
 
 export function RepositorySidebar({ state, actions, tab }) {
@@ -21,7 +32,7 @@ export function RepositorySidebar({ state, actions, tab }) {
   const id = React.useId();
   return <aside className="git-sidebar" aria-label="仓库导航"><div className="git-sidebar-tabs" role="tablist" aria-label="仓库导航视图">{[['branches', '分支'], ['changes', '更改']].map(([value, label]) => <button key={value} role="tab" type="button" id={`${id}-${value}`} aria-controls={`${id}-panel-${value}`} aria-selected={state.sidebarTab === value} tabIndex={state.sidebarTab === value ? 0 : -1} onKeyDown={navigateTabs} onClick={() => actions.setSidebarTab(value)}>{label}{value === 'changes' && <span className="git-count">{state.data.files.length}</span>}</button>)}</div>
     <div className="git-sidebar-content" role="tabpanel" id={`${id}-panel-${state.sidebarTab}`} aria-labelledby={`${id}-${state.sidebarTab}`}>
-      {state.sidebarTab === 'branches' ? <><div className="git-sidebar-search"><SearchInput value={query} onChange={setQuery} placeholder="分支或标签" /></div><div className="git-sidebar-scroll"><BranchList data={state.data} actions={actions} busy={state.busy} query={query} selected={tab.ref} /></div></> : <div className="git-sidebar-scroll"><ChangesList state={state} actions={actions} /></div>}
+      {state.sidebarTab === 'branches' ? <><div className="git-sidebar-search"><SearchInput value={query} onChange={setQuery} placeholder="分支或标签" /></div><div className="git-sidebar-scroll"><BranchList data={state.data} actions={actions} busy={state.busy} query={query} selected={tab.ref} /></div></> : <><ChangesActions state={state} actions={actions} /><div className="git-sidebar-scroll"><ChangesList state={state} actions={actions} /></div></>}
     </div>
     <div hidden role="tabpanel" id={`${id}-panel-${state.sidebarTab === 'branches' ? 'changes' : 'branches'}`} aria-labelledby={`${id}-${state.sidebarTab === 'branches' ? 'changes' : 'branches'}`} />
   </aside>;

@@ -18,7 +18,8 @@ test('AI preview sends staged scope, selected route and prompt but never submits
   const calls = [];
   const model = makeModel(t, async (payload) => { calls.push(payload); return ok(draft); });
   model.patch({ settings: { ...model.state.settings, provider: 'test', model: 'model', prompt: '团队规范' } });
-  model.showDialog({ type: 'commit', ai: true });
+  model.showDialog({ type: 'commit' });
+  await model.generateCommit();
   await tick();
   assert.equal(calls.length, 1);
   assert.deepEqual(calls[0], { op: 'aiCommit', workspaceId: 'w', expected: { head: ready.head, branch: 'main' }, provider: 'test', model: 'model', prompt: '团队规范' });
@@ -31,14 +32,15 @@ test('no staged files blocks generation locally without an RPC or implicit stagi
   const calls = [];
   const model = makeModel(t, async (payload) => { calls.push(payload); return ok(draft); });
   model.patch({ data: { ...ready, files: [{ path: 'working.txt', staged: false, unstaged: true }] } });
-  model.showDialog({ type: 'commit', ai: true }); await tick();
+  model.showDialog({ type: 'commit' }); await model.generateCommit(); await tick();
   assert.equal(calls.length, 0); assert.match(model.state.error.message, /请先.*暂存/);
 });
 
 test('closing the dialog cancels generation and discards a late provider response', async (t) => {
   let resolve, signal;
   const model = makeModel(t, (payload, abortSignal) => { signal = abortSignal; return new Promise((done) => { resolve = done; }); });
-  model.showDialog({ type: 'commit', ai: true });
+  model.showDialog({ type: 'commit' });
+  void model.generateCommit();
   assert.equal(model.state.aiBusy, true);
   model.closeDialog(); assert.equal(signal.aborted, true);
   resolve(ok(draft)); await tick();
@@ -48,7 +50,8 @@ test('closing the dialog cancels generation and discards a late provider respons
 test('cancel then regenerate ignores the older cancellation while the new request stays busy', async (t) => {
   const replies = [];
   const model = makeModel(t, () => new Promise((resolve) => replies.push(resolve)));
-  model.showDialog({ type: 'commit', ai: true });
+  model.showDialog({ type: 'commit' });
+  void model.generateCommit();
   model.cancelAi();
   const pending = model.generateCommit();
   replies[0](ok({ ...draft, message: 'old' })); await tick();
@@ -60,7 +63,7 @@ test('cancel then regenerate ignores the older cancellation while the new reques
 test('workspace switch cancels generation and clears the old preview and notice', async (t) => {
   let resolve;
   const model = makeModel(t, (payload) => payload.op === 'aiCommit' ? new Promise((done) => { resolve = done; }) : Promise.resolve(ok({ state: 'not-repository', workspace: { path: '/new' } })));
-  model.showDialog({ type: 'commit', ai: true }); model.selectWorkspace('new');
+  model.showDialog({ type: 'commit' }); void model.generateCommit(); model.selectWorkspace('new');
   resolve(ok(draft)); await tick();
   assert.equal(model.state.workspaceId, 'new'); assert.equal(model.state.aiDraft, null); assert.equal(model.state.aiBusy, false); assert.equal(model.state.dialog, null);
 });

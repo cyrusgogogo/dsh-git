@@ -80,6 +80,7 @@ window.testMount = ({ windowsMenu = true } = {}) => {
     if (payload.op === 'aiModels' && server.legacyAiModels) return { ok: false, error: { code: 'INVALID_REQUEST', message: 'Git 请求参数不合法。', details: { issues: [{ path: ['payload', 'op'], message: 'Invalid input' }] } } };
     if (payload.op === 'aiModels') return { ok: true, value: { available: true, models: [{ provider: 'test-provider', model: 'test-model', label: '测试模型' }, { provider: 'test-provider', model: 'review-model', label: 'Review model' }] } };
     if (payload.op === 'aiCommit') {
+      server.aiReceivedFiles = structuredClone(server.files);
       const tree = stagedTree();
       if (server.aiDelay) await new Promise((resolve) => setTimeout(resolve, server.aiDelay));
       signal?.throwIfAborted();
@@ -143,6 +144,8 @@ window.testMount = ({ windowsMenu = true } = {}) => {
         server.worktrees[0].head = picked.hash;
       }
       if (m.action === 'stage' || m.action === 'unstage') {
+        if (m.action === 'stage' && server.stageDelay) { await new Promise((resolve) => setTimeout(resolve, server.stageDelay)); signal?.throwIfAborted(); }
+        if (m.action === 'stage' && server.stageError) return { ok: false, error: { code: 'GIT_COMMAND_FAILED', message: server.stageError } };
         server.indexVersion = (server.indexVersion || 0) + 1;
         for (const file of server.files.filter((file) => m.paths.includes(file.path))) { file.staged = m.action === 'stage'; file.unstaged = !file.staged; if (file.staged) file.conflict = false; }
       }

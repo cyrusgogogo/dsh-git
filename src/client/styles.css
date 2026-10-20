@@ -437,7 +437,9 @@
 .git-commit-file > span:last-child { font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- commit preview + settings ---------- */
-.git-change-commit-actions { display: flex; gap: 5px; margin: 12px 3px; }
+.git-changes-toolbar { flex-shrink: 0; padding: 9px 10px 8px; border-bottom: 1px solid var(--git-line); }
+.git-change-commit-actions { display: flex; gap: 5px; margin: 0; }
+.git-changes-toolbar-hint { margin: 6px 0 0; color: var(--git-muted); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
 .git-change-commit-actions > .git-button { flex: 1; padding-inline: 6px; font-size: 11px; }
 .git-change-commit-actions > .git-commit-trigger { width: auto; margin: 0; }
 .git-commit-dialog { width: min(680px, calc(100vw - 32px)); }

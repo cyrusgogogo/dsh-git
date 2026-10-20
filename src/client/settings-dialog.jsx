@@ -6,7 +6,7 @@ import { DEFAULT_SETTINGS, shortcutFromEvent, validateSettings } from './setting
 
 const SHORTCUTS = [
   ['commit', '提交（打开确认）'],
-  ['aiCommit', 'AI 生成提交信息'],
+  ['aiCommit', 'AI 提交（自动暂存并生成）'],
   ['push', '推送（打开确认）'],
   ['fetch', '获取 fetch（打开确认）'],
 ];
@@ -102,7 +102,7 @@ function SettingsForm({ state, actions }) {
             </section>
             <section className="git-settings-section" aria-labelledby={`${id}-shortcuts-title`}>
               <div className="git-settings-section-heading"><h3 id={`${id}-shortcuts-title`}>快捷键</h3><button type="button" className="git-button git-button-small" onClick={() => { update({ shortcuts: { ...DEFAULT_SETTINGS.shortcuts } }); setRecording(null); }}>恢复默认快捷键</button></div>
-              <p id={`${id}-shortcuts-hint`} className="git-settings-help">仅在 Git 面板获得焦点时生效，不拦截输入框或其他弹窗。留空即禁用。支持 Ctrl / Meta / Alt / Shift + 按键；Mod 在 macOS 对应 ⌘，其他平台对应 Ctrl。提交、推送和获取快捷键只打开确认弹窗，不会直接执行。</p>
+              <p id={`${id}-shortcuts-hint`} className="git-settings-help">仅在 Git 面板获得焦点时生效，不拦截输入框或其他弹窗。留空即禁用。支持 Ctrl / Meta / Alt / Shift + 按键；Mod 在 macOS 对应 ⌘，其他平台对应 Ctrl。提交、推送和获取快捷键只打开确认弹窗，不会直接执行。AI 提交快捷键会自动暂存全部当前改动并生成预览，仍需确认后才提交。</p>
               <div className="git-settings-grid">
                 {SHORTCUTS.map(([action, label]) => <div className="git-settings-shortcut" key={action}>
                   <label className="git-form-field" htmlFor={`${id}-${action}`}><span>{label}</span><input id={`${id}-${action}`} ref={(element) => { inputRefs.current[action] = element; }} value={draft.shortcuts[action]} onChange={(event) => setShortcut(action, event.target.value)} onKeyDown={(event) => record(event, action)} onBlur={() => { if (recording === action) setRecording(null); }} readOnly={recording === action} placeholder={recording === action ? '请按下组合键…' : '已禁用'} aria-describedby={`${id}-shortcuts-hint${recording === action ? ` ${id}-recording` : ''}`} autoComplete="off" spellCheck={false} maxLength={120} /></label>

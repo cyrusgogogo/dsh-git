@@ -10,8 +10,9 @@ function SelectionCheckbox({ mixed, ...props }) {
 }
 
 export function CommitDialog({ state, actions }) {
-  const { data, dialog, aiDraft, aiBusy } = state;
-  const [selected, setSelected] = useState(() => new Set());
+  const { data, dialog, aiDraft, aiBusy, aiPreparing } = state;
+  const [selected, setSelected] = useState(() => new Set(dialog.ai ? data.files.map((file) => file.path) : []));
+  useEffect(() => { if (state.aiSelectedPaths) setSelected(new Set(state.aiSelectedPaths)); }, [state.aiSelectedPaths]);
   const [message, setMessage] = useState('');
   const [remote, setRemote] = useState(() => currentBranch(data)?.upstream ? '__upstream' : data.remotes.includes('origin') ? 'origin' : data.remotes[0] || '');
   const [selectionError, setSelectionError] = useState('');
@@ -29,7 +30,7 @@ export function CommitDialog({ state, actions }) {
   const stageable = chosen.filter((file) => file.unstaged && !(file.conflict && !file.unstaged));
   const unstageable = chosen.filter((file) => file.staged);
   const staged = files.filter((file) => file.staged);
-  const pending = Boolean(state.busy);
+  const pending = Boolean(state.busy || aiPreparing);
   const locked = pending || aiBusy;
   const branch = currentBranch(data);
   const canPush = Boolean(branch && data.remotes.length && remote);
@@ -51,7 +52,7 @@ export function CommitDialog({ state, actions }) {
   return <Dialog.Root open onOpenChange={(open) => { if (!open) actions.closeDialog(); }}>
     <Dialog.Portal><Dialog.Overlay className="dsh-git git-modal-overlay" /><Dialog.Content className="dsh-git git-dialog git-commit-dialog" onOpenAutoFocus={(event) => { event.preventDefault(); messageRef.current?.focus(); }} onEscapeKeyDown={(event) => { if (pending) event.preventDefault(); }} onPointerDownOutside={(event) => event.preventDefault()}>
       <div className="git-dialog-heading"><GitCommitHorizontal size={17} aria-hidden="true" /><Dialog.Title>{dialog.ai ? 'AI 提交预览' : '提交更改'}</Dialog.Title><IconButton icon={X} label="关闭操作对话框" onClick={actions.closeDialog} disabled={pending} /></div>
-      <Dialog.Description className="git-dialog-description">选择文件后批量暂存；只提交已暂存的内容。AI 仅生成文本，不会自动提交或推送。</Dialog.Description>
+      <Dialog.Description className="git-dialog-description">{dialog.ai ? '自动暂存全部当前改动并全选文件，再生成可编辑的提交信息。确认下方“提交”或“提交并推送”后才执行提交。' : '选择文件后批量暂存；只提交已暂存的内容。AI 仅生成文本，不会自动提交或推送。'}</Dialog.Description>
       <form onSubmit={submit}>
         <fieldset className="git-form-fields" disabled={locked}>
           <section className="git-commit-selection" aria-label="提交文件选择">
@@ -72,15 +73,17 @@ export function CommitDialog({ state, actions }) {
               </div>)}
             </div>
             <p className="git-commit-help">已暂存 {staged.length} 个文件 · 勾选仅用于批量操作；“暂存所选”会暂存所选文件的全部当前更改。</p>
+            {dialog.ai && <p className="git-commit-help">取消预览或停止生成不会撤销已完成的暂存。需要排除文件时，请取消暂存该文件后重新生成。</p>}
             {selectionError && <p className="git-inline-error" role="alert">{selectionError}</p>}
           </section>
           <div className="git-ai-heading"><span>提交信息 <small>{aiDraft ? `AI 生成 · ${aiDraft.provider} / ${aiDraft.model}` : '支持直接编辑'}</small></span><button type="button" className="git-button git-button-small" disabled={!staged.length || Boolean(data.operation)} onClick={actions.generateCommit}><Sparkles size={13} aria-hidden="true" />{aiDraft ? '重新生成' : 'AI 生成'}</button></div>
           <label className="git-form-field"><span className="git-sr-only">提交信息</span><textarea ref={messageRef} aria-label="提交信息" value={message} onChange={(event) => setMessage(event.target.value)} placeholder="feat(scope): 简要描述这次更改…" rows={5} maxLength={16000} required /></label>
           {aiDraft && <p className={`git-commit-help ${aiDraft.stale || aiDraft.truncated ? 'git-ai-warning' : ''}`} role="status">{aiDraft.stale ? '暂存内容已变化，请重新生成提交信息后再确认。' : aiDraft.truncated ? '差异较大，仅发送了部分内容。请核对并补充提交说明后再确认。' : '请核对并按需编辑生成结果；点击下方按钮才会执行 Git 操作。'}</p>}
-          {!staged.length && <p className="git-commit-help" role="status">请先暂存至少一个文件，才能生成或提交。</p>}
+          {!staged.length && !aiPreparing && <p className="git-commit-help" role="status">请先暂存至少一个文件，才能生成或提交。</p>}
           {canPush && <label className="git-form-field"><span>提交并推送的目标</span><select aria-label="提交并推送的目标" value={remote} onChange={(event) => setRemote(event.target.value)}>{branch.upstream && <option value="__upstream">已配置上游 · {shortRef(branch.upstream)}</option>}{data.remotes.map((item) => <option key={item} value={item}>{item} · {branch.name}（设置上游）</option>)}</select></label>}
           <p className="git-commit-help">生成时会将已暂存差异发送给{state.settings.model ? ` ${state.settings.provider} / ${state.settings.model}` : '宿主首个可用模型'}。请勿暂存密钥等敏感内容。模型和文本规范可在 Git 设置中修改。</p>
         </fieldset>
+        {aiPreparing && <div className="git-ai-progress" role="status"><Spinner /><span>正在检查并暂存全部当前改动，随后生成提交信息…</span></div>}
         {aiBusy && <div className="git-ai-progress" role="status"><Spinner /><span>正在生成提交信息，不会执行提交…</span><button type="button" className="git-button git-button-small" onClick={actions.cancelAi}>停止生成</button></div>}
         {state.error && <p className="git-inline-error" role="alert">{state.error.message}</p>}
         <div className="git-dialog-footer"><button type="button" className="git-button" onClick={actions.closeDialog} disabled={pending}>取消</button><span className="git-spacer" /><button type="submit" className="git-button git-button-primary" value="commit" disabled={invalid}>{pending ? <Spinner /> : <GitCommitHorizontal size={14} aria-hidden="true" />}提交</button><button type="submit" value="push" className="git-button" disabled={invalid || !canPush} title={canPush ? '先创建本地提交，再非强制推送；失败时保留本地提交' : '需要本地分支和远程仓库才能推送'}><Upload size={14} aria-hidden="true" />提交并推送</button></div>

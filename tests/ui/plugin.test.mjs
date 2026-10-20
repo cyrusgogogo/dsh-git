@@ -428,6 +428,72 @@ test('browser and incompatible caption layouts retain the existing fallback entr
   await page.evaluate(() => { window.__gitTest.setSession(false); window.__gitTest.setPanel('settings'); });
   await expect(page.locator('.git-global-launcher .git-toolbar-entry')).toBeVisible();
 });
+test('change actions stay above the file scroll area and remain visible with long lists', async () => {
+  await page.getByRole('tab', { name: /更改/ }).click();
+  const toolbar = page.locator('.git-changes-toolbar');
+  await expect(toolbar.getByRole('button', { name: '提交更改…', exact: true })).toBeVisible();
+  await expect(toolbar.getByRole('button', { name: 'AI 提交', exact: true })).toBeVisible();
+  await expect(page.locator('.git-changes-list .git-change-commit-actions')).toHaveCount(0);
+  await page.locator('.git-sidebar').screenshot({ path: '.artifacts/screenshots/changes-top-actions.png' });
+  await page.evaluate(() => { window.__gitTest.server.files.push(...Array.from({ length: 80 }, (_, index) => ({ path: `src/long-list-${index}.mjs`, index: '.', worktree: 'M', staged: false, unstaged: true, conflict: false }))); });
+  await page.getByRole('button', { name: '刷新仓库', exact: true }).click();
+  await expect(page.locator('.git-change-row')).toHaveCount(83);
+  const before = await toolbar.boundingBox();
+  const list = page.locator('.git-sidebar-scroll');
+  assert.ok((await list.boundingBox()).y >= before.y + before.height - 1);
+  await list.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  assert.ok(await list.evaluate((element) => element.scrollTop > 0));
+  const after = await toolbar.boundingBox();
+  assert.equal(after.y, before.y);
+  await expect(toolbar.getByRole('button', { name: 'AI 提交', exact: true })).toBeInViewport();
+  await toolbar.getByRole('button', { name: '提交更改…', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '提交更改', exact: true })).toBeVisible();
+  assert.equal(await page.evaluate(() => window.__gitTest.requests.filter((item) => item.op === 'mutate').length), 0);
+});
+
+test('AI preparation exposes staging progress and locks mutation and submit controls until generated', async () => {
+  await page.evaluate(() => { window.__gitTest.server.stageDelay = 700; });
+  await page.getByRole('tab', { name: /更改/ }).click();
+  await page.locator('.git-changes-toolbar').getByRole('button', { name: 'AI 提交', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'AI 提交预览', exact: true });
+  await expect(dialog.getByText('正在检查并暂存全部当前改动，随后生成提交信息…', { exact: true })).toBeVisible();
+  await expect(dialog.getByRole('button', { name: '提交', exact: true })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: '提交并推送', exact: true })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: '取消', exact: true })).toBeDisabled();
+  await expect(dialog.getByRole('checkbox', { name: '选择全部文件', exact: true })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeVisible();
+  assert.equal(await page.evaluate(() => window.__gitTest.requests.filter((item) => item.op === 'aiCommit').length), 0);
+  await expect(dialog.getByRole('textbox', { name: '提交信息', exact: true })).toHaveValue(/feat\(git\)/);
+  await expect(dialog.getByRole('button', { name: '提交', exact: true })).toBeEnabled();
+});
+
+test('automatic staging failure keeps the preview editable and never calls the model or commits', async () => {
+  await page.evaluate(() => { window.__gitTest.server.stageError = '暂存失败：index.lock 已存在'; });
+  await page.locator('.git-statusbar').getByRole('button', { name: 'AI 提交', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('alert')).toContainText('index.lock');
+  await expect(dialog.getByRole('textbox', { name: '提交信息', exact: true })).toBeEnabled();
+  await expect(dialog.getByRole('button', { name: '取消', exact: true })).toBeEnabled();
+  const requests = await page.evaluate(() => window.__gitTest.requests);
+  assert.equal(requests.filter((item) => item.op === 'aiCommit').length, 0);
+  assert.deepEqual(requests.filter((item) => item.op === 'mutate').map((item) => item.mutation.action), ['stage']);
+});
+
+test('top change actions keep a stable disabled state for a clean tree and reject conflicted AI staging', async () => {
+  await page.getByRole('tab', { name: /更改/ }).click();
+  await page.evaluate(() => { window.__gitTest.server.files = []; });
+  await page.getByRole('button', { name: '刷新仓库', exact: true }).click();
+  const toolbar = page.locator('.git-changes-toolbar');
+  await expect(page.getByText('工作区干净', { exact: true }).first()).toBeVisible();
+  await expect(toolbar.getByRole('button', { name: '提交更改…', exact: true })).toBeDisabled();
+  await expect(toolbar.getByRole('button', { name: 'AI 提交', exact: true })).toBeDisabled();
+  await page.evaluate(() => { window.__gitTest.server.files = [{ path: 'conflict.txt', staged: false, unstaged: true, conflict: true, index: 'U', worktree: 'U' }]; });
+  await page.getByRole('button', { name: '刷新仓库', exact: true }).click();
+  await expect(page.locator('.git-change-row')).toHaveCount(1);
+  await expect(toolbar.getByRole('button', { name: 'AI 提交', exact: true })).toBeDisabled();
+});
+
 test('commit dialog batches selected files without implicit staging and supports select-all/invert', async () => {
   await page.locator('.git-statusbar').getByRole('button', { name: '提交', exact: true }).click();
   const dialog = page.getByRole('dialog');
@@ -450,17 +516,27 @@ test('commit dialog batches selected files without implicit staging and supports
   await expect(page.locator('.git-statusbar > .git-notice')).toContainText('操作已完成');
   await expect(page.locator('.git-panel > .git-notice')).toHaveCount(0);
 });
-test('AI entry generates an editable preview and never commits before explicit confirmation', async () => {
-  await page.locator('.git-statusbar').getByRole('button', { name: 'AI 提交', exact: true }).click();
+test('AI entry stages every current change, selects all files and generates an editable preview before explicit confirmation', async () => {
+  await page.getByRole('tab', { name: /更改/ }).click();
+  await page.locator('.git-changes-toolbar').getByRole('button', { name: 'AI 提交', exact: true }).click();
   const dialog = page.getByRole('dialog');
   const message = dialog.getByRole('textbox', { name: '提交信息', exact: true });
   await expect(message).toHaveValue(/feat\(git\): 改进提交工作流/);
-  assert.equal(await page.evaluate(() => window.__gitTest.requests.filter((item) => item.op === 'mutate').length), 0);
+  await expect(dialog.locator('.git-selection-count')).toContainText('已选 3 / 3');
+  await expect(dialog.getByRole('checkbox', { name: '选择全部文件', exact: true })).toBeChecked();
+  await expect(dialog.locator('.git-stage-badge.is-staged')).toHaveCount(3);
+  const before = await page.evaluate(() => ({ requests: window.__gitTest.requests, received: window.__gitTest.server.aiReceivedFiles }));
+  const staged = before.requests.filter((item) => item.op === 'mutate');
+  assert.deepEqual(staged.map((item) => item.mutation), [{ action: 'stage', paths: ['src/client/panel.jsx', 'docs/usage.md'] }]);
+  assert.ok(before.received.every((file) => file.staged && !file.unstaged));
+  assert.ok(before.requests.findIndex((item) => item.op === 'mutate') < before.requests.findIndex((item) => item.op === 'aiCommit'));
+  await expect(dialog.getByRole('button', { name: '提交', exact: true })).toBeEnabled();
+  await expect(dialog.getByRole('button', { name: '提交并推送', exact: true })).toBeEnabled();
   await message.fill('fix(git): 用户确认后的提交说明');
   await dialog.screenshot({ path: '.artifacts/screenshots/ai-commit-preview.png' });
   await dialog.getByRole('button', { name: '提交', exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  const mutation = await page.evaluate(() => window.__gitTest.requests.find((item) => item.op === 'mutate').mutation);
+  const mutation = await page.evaluate(() => window.__gitTest.requests.find((item) => item.op === 'mutate' && item.mutation.action === 'commit').mutation);
   assert.equal(mutation.action, 'commit'); assert.equal(mutation.message, 'fix(git): 用户确认后的提交说明'); assert.match(mutation.stagedTree, /^[a-f\d]{40}$/);
 });
 test('AI generation can be cancelled and errors preserve manual commit access', async () => {
@@ -476,13 +552,15 @@ test('AI generation can be cancelled and errors preserve manual commit access', 
   await dialog.getByRole('textbox', { name: '提交信息', exact: true }).fill('docs: 手动提交仍可用');
   await expect(dialog.getByRole('button', { name: '提交', exact: true })).toBeEnabled();
   await dialog.getByRole('button', { name: '取消', exact: true }).click();
-  assert.equal(await page.evaluate(() => window.__gitTest.requests.filter((item) => item.op === 'mutate').length), 0);
+  const actions = await page.evaluate(() => window.__gitTest.requests.filter((item) => item.op === 'mutate').map((item) => item.mutation.action));
+  assert.deepEqual(actions, ['stage']);
+  assert.equal(await page.evaluate(() => window.__gitTest.server.files.every((file) => file.staged && !file.unstaged)), true);
 });
 test('index changes after AI preview block submission until regeneration', async () => {
   await page.locator('.git-statusbar').getByRole('button', { name: 'AI 提交', exact: true }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByRole('textbox', { name: '提交信息', exact: true })).toHaveValue(/feat\(git\)/);
-  await dialog.getByRole('button', { name: '暂存 src/client/panel.jsx', exact: true }).click();
+  await dialog.getByRole('button', { name: '取消暂存 src/client/panel.jsx', exact: true }).click();
   await expect(dialog).toContainText('暂存内容已变化，请重新生成');
   await expect(dialog.getByRole('button', { name: '提交', exact: true })).toBeDisabled();
   await dialog.getByRole('button', { name: '重新生成', exact: true }).click();
@@ -502,7 +580,7 @@ test('commit-and-push is explicit and a push failure cannot accidentally repeat 
   await expect(dialog).toHaveCount(0);
   await expect(page.locator('.git-statusbar .git-notice-error')).toContainText('本地提交已成功，但推送失败');
   const mutations = await page.evaluate(() => window.__gitTest.requests.filter((item) => item.op === 'mutate'));
-  assert.equal(mutations.length, 1); assert.equal(mutations[0].mutation.action, 'commitAndPush'); assert.equal(mutations[0].mutation.remote, 'origin');
+  assert.deepEqual(mutations.map((item) => item.mutation.action), ['stage', 'commitAndPush']); assert.equal(mutations[1].mutation.remote, 'origin');
   await page.locator('#dsh-git-panel').screenshot({ path: '.artifacts/screenshots/statusbar-notice.png' });
 });
 test('settings sit left of collapse, persist model/prompt/shortcuts and keep shortcuts local and confirmed', async () => {
