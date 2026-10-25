@@ -1,5 +1,7 @@
 # DSH Git
 
+当前发布版本 **0.1.3**，包含 AI 提交预览、自动暂存、模型与快捷键设置，以及新版筛选器。下载 [安装包](https://github.com/cyrusgogogo/dsh-git/releases/download/v0.1.3/dsh-git-0.1.3.tgz) 和 [SHA256 校验文件](https://github.com/cyrusgogogo/dsh-git/releases/download/v0.1.3/dsh-git-0.1.3.tgz.sha256)，在当前 DSH 的插件／Bundle 管理中安装；按宿主提示完整重启后生效。
+
 一个面向 DeepSeek Harness 的原生 Git 插件。采用紧凑的 IDE 风格，并随宿主明暗主题自适应，在当前 DSH 工作区下提供分支、提交历史、提交图、文件差异和 Git worktree 管理。
 
 ## 已实现
@@ -59,7 +61,7 @@ dsh plugin --profile <你的-profile> add .
 
 ```sh
 pnpm pack
-dsh plugin --profile <你的-profile> add ./dsh-git-0.1.2.tgz
+dsh plugin --profile <你的-profile> add ./dsh-git-0.1.3.tgz
 ```
 
 ### 方式二：直接从 GitHub 安装
@@ -132,7 +134,7 @@ pnpm run dev
 此错误发生在插件请求协议校验阶段，并不表示模型名称或 API 密钥错误。若页面已显示 AI 设置，但运行中的宿主仍使用旧插件协议，新客户端的 `aiModels` 请求就会被旧宿主拒绝。单独刷新页面或运行 `pnpm run build` 不保证重载已运行的宿主模块。
 
 1. 先保存当前输入，在方便时**完全退出并重启 DSH**（包括托盘驻留），再打开 Git 设置刷新模型列表；不要只刷新 Web 页面。
-2. 确认当前 profile 安装/链接的是新构建。仓库中旧的 [0.1.2 发布包](<dsh-git-0.1.2.tgz>)尚未包含 AI 功能，不能把它当成本轮源码构建。
+2. 确认当前 profile 安装/链接的是新构建。旧 `0.1.2` 发布包尚未包含 AI 功能，请使用 [0.1.3 发布包](https://github.com/cyrusgogogo/dsh-git/releases/tag/v0.1.3)或当前源码的新构建。
 3. 若完全重启后仍失败，只需提供 `/api/dsh-git` 响应的 `result.error.code` 与 `result.error.details.issues`，不要提供 Cookie、Authorization、模型密钥或完整配置。
 
 插件仅在新操作被宿主判定为未知操作时提示版本不一致；真实字段错误和未配置模型服务仍按原类别显示，不会自动安装、重启、放宽校验或改走其他模型接口。
