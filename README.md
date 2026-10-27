@@ -1,38 +1,64 @@
-# DSH Git
+<h1 align="center">DSH Git</h1>
 
-一个面向 DeepSeek Harness 的原生 Git 插件。采用紧凑的 IDE 风格，并随宿主明暗主题自适应，在当前 DSH 工作区下提供分支、提交历史、提交图、文件差异和 Git worktree 管理。
+<p align="center">为 DeepSeek Harness 打造的原生 Git 插件</p>
 
-## 已实现
+<p align="center">
+  分支与提交历史 · 可视化提交图 · 文件差异 · AI 提交 · Worktree 管理
+</p>
 
-- **Git 初始化**：在未使用 Git 的已注册工作区中，经确认执行 `git init --initial-branch=main`；已有 `.git` 元数据（包括损坏元数据）不会被覆盖。
-- **顶部 Git 入口**：Windows 桌面版在“应用 / 编辑”右侧追加 **Git** 按钮，点击打开/收起底部面板。普通浏览器及不兼容的宿主保留会话右上角入口；没有活动会话时提供右上角备用入口。
-- **底部面板**：支持拖动调整高度、键盘调整、最大化、收起，以及多个独立 Git 视图标签。
-- **主题自适应界面**：表面、边框与文字色全部取自 DSH 宿主令牌；强调色、语义色和提交图/差异配色随宿主明暗主题调整，浅色主题下不会出现低对比的荧光色。焦点环、悬停/禁用态、按钮按压反馈、弹层触发点缩放与 `prefers-reduced-motion` 一并处理。
-- **三栏仓库视图**：左侧分支/更改，中间提交历史及真实父子关系提交图，右侧变更文件树、提交正文、作者、时间与引用。
-- **分支下拉**：搜索本地和远程分支；更新、提交、推送、新建分支、抓取远程；签出前明确确认。
-- **不同的右键菜单**：当前分支与其他本地/远程分支分别提供适用操作，也有可通过键盘打开的“更多操作”按钮。
-- **分支旁的加号**：紧邻分支选择；两个选项严格为“GIT工作区”和“工作树”。前者新增仓库视图，后者显示真实的 `git worktree list` 结果。
-- **统一选择框**：历史分支/日期与工作区切换采用 shadcn/ui 风格的 Radix Select，统一圆角、分组、选中勾、焦点态与键盘导航；工作区选项附目录路径，长名称省略，弹层跟随宿主明暗主题并保持不透明。分支操作、右键菜单及子菜单同样使用实色背景。
-- **平铺历史筛选**：分支、用户、日期始终显示在提交图顶部，支持组合与一键清除；日期包括今天、最近 7/30/90 天与最近一年（按 Git 提交时间）。
-- **优选（cherry-pick）**：位于提交图顶部最右侧，将选中的普通提交应用到当前本地分支；要求工作区干净并明确确认，支持冲突后继续或中止，不猜测合并提交的主父提交。
-- **工作树**：创建、查看、打开为插件查看目录、复制路径、锁定/解锁、安全移除；保护主工作树、当前查看目录、已锁定或有改动的工作树。
-- **日常 Git**：逐文件/全部暂存与取消暂存、提交已暂存内容、分支创建/重命名/安全删除、合并、变基、仅快进更新、设置上游、非强制推送、抓取远程、远程分支删除。
-- **批量提交选择**：提交弹窗支持全选、反选、批量暂存/取消暂存；勾选与实际暂存分离，保留逐文件操作与已暂存/部分暂存状态，每批最多 1000 个文件。
-- **底部操作提示**：成功/失败消息显示在底栏路径、分支右侧，不再挤占顶部仓库内容；长消息省略并可悬停查看完整文本，错误不会自动消失。
-- **AI 提交预览**：“更改”区顶部固定显示提交与 AI 入口；点击 AI 提交会自动暂存全部当前改动（含新文件、删除及部分暂存文件的剩余改动）、全选预览文件，再生成可编辑文本，最后由用户选择“提交”或“提交并推送”。可停止生成；失败或取消时保留已完成的暂存，无可用模型时仍支持手写提交。
-- **Git 设置**：面板右上角收起按钮左侧的设置按钮，可选择 DSH 已登记模型、编辑提交文本规范和配置/录制提交、AI 生成、推送及获取快捷键。设置仅保存在当前浏览器，不读取或保存模型密钥。
-- **冲突处理**：保留冲突现场；在编辑器解决冲突后，可在“更改”中暂存并继续/中止合并、变基或优选。
-- **友好的空状态**：非 Git 目录不是异常；另行区分 Git 未安装、目录消失、权限/执行失败。
+<p align="center">
+  <a href="https://github.com/cyrusgogogo/dsh-git/graphs/contributors"><img src="https://img.shields.io/github/contributors/cyrusgogogo/dsh-git?style=flat-square" alt="GitHub contributors"></a>
+  <a href="https://github.com/cyrusgogogo/dsh-git/network/members"><img src="https://img.shields.io/github/forks/cyrusgogogo/dsh-git?style=flat-square" alt="GitHub forks"></a>
+  <a href="https://github.com/cyrusgogogo/dsh-git/stargazers"><img src="https://img.shields.io/github/stars/cyrusgogogo/dsh-git?style=flat-square" alt="GitHub stars"></a>
+  <a href="https://github.com/cyrusgogogo/dsh-git/issues"><img src="https://img.shields.io/github/issues/cyrusgogogo/dsh-git?style=flat-square" alt="GitHub issues"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/cyrusgogogo/dsh-git?style=flat-square" alt="License: MIT"></a>
+</p>
 
-### 实现说明
+---
 
-插件按紧凑的深色 IDE 布局实现，对接依据为 DSH **0.2.0-rc.2**、Cordis **4.0.4** 的公开服务与注册契约。
+在 DSH 内查看仓库、管理分支与工作树，完成暂存、提交和推送，无需离开当前工作区。紧凑的 IDE 风格底部面板随宿主明暗主题自适应，AI 生成的提交说明可在确认前自由编辑。
 
-该宿主没有公开的原生 bottom-panel 插槽，因此底部面板通过公开 `shell.overlay` 实现为**固定、可缩放的底部覆盖层**，不会伪造不存在的宿主 API。它不会把宿主聊天区域整体重新排版，增大面板会遮住其下方内容。
+## 插件截图
 
-Windows 桌面标题栏目前也没有公开的插件菜单插槽。顶部入口采用针对 DSH **0.2.1-rc.2** 的兼容适配：检测 `[data-windows-menu]` 的开放 Shadow DOM，在原生 menubar **后面**追加独立按钮，而非注册第三个原生菜单；不修改“应用 / 编辑”、其快捷键或私有 IPC，不修改 DSH 安装文件。若标题栏尚未挂载或结构不匹配，则回退到原入口；结构恢复时自动迁回。宿主升级后仍需核对兼容性。
+以下截图使用演示仓库数据，点击图片可查看原图。
 
-插件不会自行修改 DSH 的运行中配置，也不会自行重启宿主；安装后是否需要重启由宿主提示决定。
+### 仓库总览
+
+分支、更改、提交图和文件详情集中在同一个面板中，支持按分支、用户和日期筛选历史。
+
+![深色主题下的 Git 仓库面板，包含分支列表、提交图和文件详情](<docs/screenshots/workspace-dark.png>)
+
+<details>
+<summary>查看浅色主题</summary>
+
+![浅色主题下的 Git 仓库面板](<docs/screenshots/workspace-light.png>)
+
+</details>
+
+### 文件差异
+
+点击提交中的文件，查看带行号和增删高亮的只读差异。
+
+![文件差异查看器，展示代码增删与行号](<docs/screenshots/file-diff.png>)
+
+### 提交与 AI 预览
+
+手动提交支持全选、反选和批量暂存；AI 提交会先自动暂存全部当前改动，再生成可编辑的说明，最终由你确认提交或提交并推送。
+
+![AI 提交预览，包含暂存文件、可编辑提交说明和提交确认按钮](<docs/screenshots/ai-commit-preview.png>)
+
+<details>
+<summary>查看手动批量提交</summary>
+
+![手动提交弹窗，支持文件选择、批量暂存和编辑提交说明](<docs/screenshots/batch-commit.png>)
+
+</details>
+
+### 工作树管理
+
+查看同一仓库的独立工作目录，创建、打开、锁定或移除工作树。“打开”仅切换插件的查看目录，不改变 DSH 会话工作区。
+
+![Git 工作树管理列表，展示分支、工作目录、状态及操作](<docs/screenshots/worktrees.png>)
 
 ## 安装
 
@@ -154,55 +180,6 @@ pnpm run dev
 - 提交列表：上下方向键、Home、End。
 - 分支菜单、下拉、对话框：Radix 管理焦点与键盘行为；Esc 关闭，执行中的操作对话框不会被 Esc 意外关闭。
 - 面板上边缘：聚焦后使用上下方向键调整高度，Home/End 调整到预设/最大高度；双击切换最大化。
-
-## 安全与限制
-
-- **AI 数据边界**：仅在明确触发 AI 生成时，将捕获的已暂存差异和提交规范发给 DSH 模型服务。**AI 提交入口会先暂存全部当前未暂存/未跟踪改动，因此这些内容也会进入模型输入**；不包含 Git 忽略文件、提交范围外文件正文、会话历史或模型工具。差异上限 64 KiB，提交规范上限 16000 字符，编码后的总输入上限 128 KiB，输出上限 1024 tokens / 16000 字节，90 秒超时；截断输入会提示，不接受不完整输出。触发前请检查没有密钥或其他不应发给模型的内容。
-- **AI 与提交确认**：AI 提交的准备阶段会实际修改暂存区，取消预览不自动撤销。生成期间和最终提交前复核 HEAD、分支与暂存树；暂存变化会阻止使用旧预览。为计算暂存树标识，快照/生成还可能填充 Git tree objects 或 index 缓存；生成本身不创建提交或执行提交 hooks，不承诺 Git 元数据零写入。
-- **提交并推送**：先创建本地提交，再普通非强制推送，不自动重试或回滚。本地提交成功但推送未确认时，关闭旧提交确认并提示仅检查/重试推送；用户 Git hooks 仍会执行。若 hooks 改变已提交内容，停止后续推送并提示检查本地提交；超时/取消可能发生在提交落盘之后，应先确认结果，不可盲目重复提交。
-- **执行者是 DSH 宿主机器上的 Git**，不是模型工具沙箱中的 Git。现有 Git hooks、SSH、凭据助手和用户配置可能执行代码/访问网络。仅对可信工作区使用写操作。
-- 不使用 shell，不允许客户端提供任意命令、可执行文件或 cwd；工作区路径只从宿主注册表解析。
-- 选择的 linked worktree 必须与原工作区的规范化 Git common directory 一致；不允许陈旧登记把操作导向另一个仓库。
-- 同一仓库的修改串行执行，并在锁内重新发现仓库，检查对话框打开时的 HEAD/分支预期值。
-- 对解析出的真实短分支名再次校验；显式终止选项解析，防止异常引用名变为 `--force` 等选项。
-- 远程操作依据 `remote.<name>.fetch` refspec 反向定位来源。**映射歧义会拒绝操作，不会猜测远程名并删除错误仓库的分支。**
-- 不提供强制推送、`reset --hard`、`branch -D`、强制覆盖 checkout 或强制移除工作树。
-- 远程删除需额外输入完整分支显示名；会真实影响远程和协作者，请谨慎操作。
-- 取消/超时会终止拥有的 Git 进程树；已经完成的提交、推送等副作用**不会因此自动回滚**。
-- 工作区外普通文件读取、Git 元数据路径、越界路径不接受；未跟踪文件读取校验真实路径并限量。
-- 命令输出有上限；大差异会截断并明确提示。二进制差异不提供图像对比，未提供文件编辑器、stash、revert、合并提交的 cherry-pick 或复杂交互式 rebase。
-- 工作树创建要求目标在当前仓库外、父目录已存在，且目标为空/不存在；不负责创建任意祖先目录。
-- 视图打开且页面可见时每 10 秒刷新本地状态；**不会自动 fetch/push**。用户手动“获取”才执行网络抓取并清理过期远程跟踪引用。
-- 当前仅识别 merge/rebase/cherry-pick 进行中的状态；不尝试代管其他外部工具的复杂 Git 流程。
-
-这不是防御恶意本机进程的文件系统沙箱；外部编辑器/Git 命令仍可能并发修改仓库。插件的串行化与预期检查只覆盖其自身请求和可检测状态变化。
-
-## 配置
-
-[组合包 patch](<cordis.patch.yml>)使用稳定根行 ID。覆盖配置时应保留完整 `config`，宿主的 patch 不是对象深合并。
-
-| 配置 | 默认值 | 范围 | 含义 |
-| --- | ---: | ---: | --- |
-| `maxCommits` | 300 | 20–1000 | 每次加载的提交数量，支持继续加载 |
-| `commandTimeoutMs` | 30000 | 1000–120000 | 本地 Git 命令超时 |
-| `networkTimeoutMs` | 120000 | 1000–600000 | 网络 Git 命令超时 |
-
-## 项目导航
-
-- [宿主入口](<src/index.mjs>)：Standard Schema 配置、原生 Connection Fetch 路由、错误封装、生命周期。
-- [Git 服务](<src/host/git-service.mjs>)：工作区授权、仓库发现、数据读取与安全修改。
-- [AI 提交服务](<src/host/ai-commit.mjs>)：可选宿主模型目录、有界 staged diff、取消与安全输出处理。
-- [提交预览](<src/client/commit-dialog.jsx>) / [设置页面](<src/client/settings-dialog.jsx>) / [设置与快捷键](<src/client/settings.mjs>)：批量暂存、人工确认与浏览器本地偏好。
-- [AI 单元测试](<tests/ai-commit.test.mjs>) / [AI 真实 Git 测试](<tests/ai-commit-git.test.mjs>) / [提交状态模型测试](<tests/commit-model.test.mjs>) / [设置测试](<tests/settings.test.mjs>)。
-- [Git runner](<src/host/git-runner.mjs>)：无 shell 子进程、取消、超时与输出限额。
-- [解析器](<src/host/parsers.mjs>)：NUL 格式 status、refs、log、worktree 与文件列表。
-- [客户端入口](<src/client/index.jsx>) / [状态模型](<src/client/model.mjs>)：公开插槽接入、请求取消和界面状态。
-- [面板](<src/client/panel.jsx>) / [分支](<src/client/branches.jsx>) / [样式](<src/client/styles.css>)：界面实现。
-- [协议](<src/shared/protocol.mjs>)：允许的请求类型与边界校验。
-- [构建脚本](<scripts/build.mjs>)：宿主 ESM 与 DSH lazy-CJS 浏览器产物。
-- [真实 Git 回归测试](<tests/git-service.test.mjs>) / [模型与协议测试](<tests/model-and-protocol.test.mjs>) / [浏览器测试](<tests/ui/plugin.test.mjs>)。
-- [验收与兼容性记录](<docs/verification.md>)。
-- [开发笔记](<docs/research/dsh-plugin-development-notes.md>)与[参考笔记](<docs/research/dsh-plugin-reference-notes.md>)。
 
 ## 许可
 
