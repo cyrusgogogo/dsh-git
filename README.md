@@ -1,6 +1,4 @@
-<h1 align="center">DSH Git</h1>
-
-<p align="center">为 DeepSeek Harness 打造的原生 Git 插件</p>
+# DSH Git
 
 <p align="center">
   分支与提交历史 · 可视化提交图 · 文件差异 · AI 提交 · Worktree 管理

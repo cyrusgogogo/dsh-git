@@ -24,7 +24,7 @@ for (const name of [...names].sort()) {
     source = 'The 2.3.8 npm tarball declares MIT but omits a license file. Notice reproduced from [the upstream repository](https://raw.githubusercontent.com/theKashey/react-remove-scroll-bar/master/LICENSE); [published package metadata](https://registry.npmjs.org/react-remove-scroll-bar/2.3.8) confirms the MIT declaration.';
   }
   if (!license) throw new Error(`Missing upstream license: ${name}`);
-  sections.push(`## ${name}@${manifest.version}`, '', `Declared license: ${manifest.license || 'see below'}`, '', ...(source ? [source, ''] : []), '```text', license.trim(), '```', '');
+  sections.push(`## ${name}@${manifest.version}`, '', `Declared license: ${manifest.license || 'see below'}`, '', ...(source ? [source, ''] : []), '```text', license.replace(/\r\n?/g, '\n').trim(), '```', '');
 }
 try { await readFile('THIRD_PARTY_NOTICES.md', 'utf8'); } catch (error) { if (error.code !== 'ENOENT') throw error; }
 await writeFile('THIRD_PARTY_NOTICES.md', sections.join('\n'));
